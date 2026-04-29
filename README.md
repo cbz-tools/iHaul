@@ -17,6 +17,16 @@ A lightweight iFunBox alternative for Windows, written in Rust.
 - **Multilingual** — English, 日本語, 中文
 - **No iCloud / no Wi-Fi sync** — transfers over USB only, no Apple account needed
 
+## Download
+
+Download the latest release from [Releases](https://github.com/cbz-tools/ihaul/releases).
+
+| File | Contents |
+|---|---|
+| `ihaul.exe` | Windows GUI (x64) |
+
+Run it directly — no installation required.
+
 ## Screenshots
 
 ![Main window](docs/screenshots/opening.png)
@@ -32,10 +42,6 @@ A lightweight iFunBox alternative for Windows, written in Rust.
 - Target app must have **File Sharing** enabled (`UIFileSharingEnabled = true` in its Info.plist)
 
 ## Installation
-
-### Download (recommended)
-
-Download the latest `ihaul.exe` from the [Releases](https://github.com/cbz-tools/ihaul/releases) page and run it directly — no installer needed.
 
 > **Windows SmartScreen warning**: Because the binary is not code-signed, Windows may show a SmartScreen prompt on first launch. Click **"More info" → "Run anyway"** to proceed.
 
