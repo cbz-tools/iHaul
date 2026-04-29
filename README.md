@@ -19,7 +19,7 @@ A lightweight iFunBox alternative for Windows, written in Rust.
 
 ## Download
 
-Download the latest release from [Releases](https://github.com/cbz-tools/ihaul/releases).
+Download the latest release from [Releases](https://github.com/cbz-tools/iHaul/releases).
 
 | File | Contents |
 |---|---|

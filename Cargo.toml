@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Windows GUI for transferring files to/from iOS devices"
 license = "MIT"
-repository = "https://github.com/cbz-tools/ihaul"
+repository = "https://github.com/cbz-tools/iHaul"
 
 # ---------------------------------------------------------------------------
 # idevice — pinned rev; verify breaking changes before updating
