@@ -1,0 +1,36 @@
+[package]
+name = "ihaul"
+version = "0.1.0"
+edition = "2024"
+description = "Windows GUI for transferring files to/from iOS devices"
+license = "MIT"
+repository = "https://github.com/cbz-tools/ihaul"
+
+# ---------------------------------------------------------------------------
+# idevice — pinned rev; verify breaking changes before updating
+# ---------------------------------------------------------------------------
+[dependencies.idevice]
+git = "https://github.com/jkcoxson/idevice"
+rev = "6d184038f86abf9297844158768e8d791167b2a2"
+features = ["house_arrest", "afc", "usbmuxd", "installation_proxy", "springboardservices"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts"] }
+rfd = "0.15"
+futures = "0.3"
+clipboard-win = "5"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+simplelog = "0.12"
+egui_extras = "0.34"
+egui_material_icons = "0.6.0"
+plist = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+ico   = "0.3"
+winresource = "0.1"

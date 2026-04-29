@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iHaul — iOS File Transfer for Windows</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #24292e; background: #fff; }
+    header { background: #24292e; color: #fff; padding: 48px 24px; text-align: center; }
+    header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 12px; }
+    header p { font-size: 1.1rem; color: #adbac7; max-width: 600px; margin: 0 auto 24px; }
+    .btn { display: inline-block; background: #2ea44f; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 1rem; margin: 4px; }
+    .btn-outline { background: transparent; border: 1px solid #adbac7; color: #fff; }
+    .dl-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
+    .btn-dl { display: inline-block; background: #2ea44f; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.95rem; }
+    .btn-dl:hover { background: #2c974b; }
+    main { max-width: 800px; margin: 0 auto; padding: 48px 24px; }
+    h2 { font-size: 1.4rem; margin: 40px 0 16px; border-bottom: 1px solid #e1e4e8; padding-bottom: 8px; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 24px 0; }
+    .feature { border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; }
+    .feature h3 { font-size: 1rem; margin-bottom: 8px; }
+    .feature p { font-size: 0.9rem; color: #586069; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e1e4e8; }
+    th { background: #f6f8fa; font-weight: 600; }
+    code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: "SFMono-Regular", Consolas, monospace; }
+    pre { background: #f6f8fa; border-radius: 6px; padding: 16px; overflow-x: auto; margin: 12px 0; }
+    pre code { background: none; padding: 0; font-size: 0.88rem; }
+    .screenshots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+    .screenshots img { width: 100%; border: 1px solid #e1e4e8; border-radius: 6px; cursor: zoom-in; transition: opacity 0.15s; }
+    .screenshots img:hover { opacity: 0.85; }
+    #lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999; align-items: center; justify-content: center; cursor: zoom-out; }
+    #lightbox.active { display: flex; }
+    #lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+    footer { text-align: center; padding: 32px 24px; color: #586069; font-size: 0.9rem; border-top: 1px solid #e1e4e8; margin-top: 48px; }
+    footer a { color: #0366d6; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>iHaul</h1>
+    <p>A lightweight iFunBox alternative for Windows, written in Rust.</p>
+    <p style="font-size:0.95rem;color:#adbac7;margin-top:-16px;">I just needed simple file transfer, but iFunBox alternatives were too feature-rich.<br>iHaul does one thing well: transfer files between Windows and iOS — nothing more.</p>
+    <div class="dl-buttons">
+      <a class="btn-dl" href="https://github.com/cbz-tools/ihaul/releases/latest/download/ihaul.exe">⬇ Download for Windows</a>
+    </div>
+    <p style="margin-top:12px;font-size:0.85rem;color:#adbac7;"><a class="btn btn-outline" style="font-size:0.85rem;padding:6px 14px;" href="https://github.com/cbz-tools/ihaul">View on GitHub</a></p>
+  </header>
+
+  <main>
+    <div class="screenshots" style="margin-bottom:32px;">
+      <img src="screenshots/opening.png" alt="Main window">
+      <img src="screenshots/transferring.png" alt="Transfer in progress">
+    </div>
+
+    <h2>Features</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>🔌 Auto-connect</h3>
+        <p>Detects your iOS device automatically when plugged in via USB — no manual setup.</p>
+      </div>
+      <div class="feature">
+        <h3>📁 File browser</h3>
+        <p>Navigate app Documents folders with an Explorer-style interface.</p>
+      </div>
+      <div class="feature">
+        <h3>⬆ Upload</h3>
+        <p>Drag &amp; drop, Ctrl+V paste from Explorer, or file dialog. Folders supported via D&amp;D / Ctrl+V.</p>
+      </div>
+      <div class="feature">
+        <h3>⬇ Export</h3>
+        <p>Download files and folders to a local folder with folder structure preserved.</p>
+      </div>
+      <div class="feature">
+        <h3>⚡ Parallel transfers</h3>
+        <p>Transfer multiple files concurrently with speed and progress tracking.</p>
+      </div>
+      <div class="feature">
+        <h3>🌐 Multilingual</h3>
+        <p>English, 日本語, 中文 — switch in Settings.</p>
+      </div>
+    </div>
+
+    <h2>Requirements</h2>
+    <ul style="padding-left:20px;line-height:2;">
+      <li>Windows 10/11 (x64)</li>
+      <li><strong>iTunes</strong> or <strong>Apple Devices for Windows</strong> (provides the USB driver)</li>
+      <li>iOS device trusted on the PC ("Trust This Computer" prompt)</li>
+      <li>Target app must have File Sharing enabled (<code>UIFileSharingEnabled = true</code>)</li>
+    </ul>
+
+    <h2>Usage</h2>
+    <ol style="padding-left:20px;line-height:2;">
+      <li>Connect your iOS device via USB and tap <strong>Trust</strong> on the device if prompted.</li>
+      <li>Launch <code>ihaul.exe</code> — the app detects the device automatically within a few seconds.</li>
+      <li>Select an app from the sidebar to browse its Documents folder.</li>
+      <li>Use the toolbar buttons or drag &amp; drop to upload files.</li>
+    </ol>
+
+    <h2>Keyboard Shortcuts</h2>
+    <table>
+      <tr><th>Key</th><th>Action</th></tr>
+      <tr><td>Enter</td><td>Open folder</td></tr>
+      <tr><td>Alt + ← / Mouse XButton1</td><td>Back</td></tr>
+      <tr><td>Alt + → / Mouse XButton2</td><td>Forward</td></tr>
+      <tr><td>↑ / ↓</td><td>Move selection</td></tr>
+      <tr><td>Shift + ↑ / ↓</td><td>Extend selection</td></tr>
+      <tr><td>Ctrl+V</td><td>Paste files from Explorer clipboard</td></tr>
+      <tr><td>Delete</td><td>Delete selected files</td></tr>
+      <tr><td>F2</td><td>Rename selected file</td></tr>
+    </table>
+
+    <h2>Installation</h2>
+    <p>Download <code>ihaul.exe</code> from the <a href="https://github.com/cbz-tools/ihaul/releases">Releases</a> page and run it directly — no installer needed.</p>
+    <p style="margin-top:8px;font-size:0.9rem;color:#586069;">⚠ Windows may show a SmartScreen warning on first launch. Click <strong>"More info" → "Run anyway"</strong> to proceed.</p>
+
+    <h2>Build from Source</h2>
+    <pre><code>cargo build --release</code></pre>
+    <p style="margin-top:8px;font-size:0.9rem;color:#586069;">Prerequisites: Rust 1.85+, <a href="https://visualstudio.microsoft.com/visual-cpp-build-tools/">Visual Studio Build Tools</a> ("Desktop development with C++" workload) + <code>rustup target add x86_64-pc-windows-msvc</code>, NASM (add to PATH).</p>
+
+    <h2>Built With</h2>
+    <table>
+      <tr><th>Library</th><th>Purpose</th></tr>
+      <tr><td><a href="https://github.com/jkcoxson/idevice">idevice</a></td><td>Pure Rust iOS communication library</td></tr>
+      <tr><td><a href="https://github.com/emilk/egui">eframe / egui</a></td><td>Immediate-mode GUI</td></tr>
+      <tr><td><a href="https://tokio.rs">tokio</a></td><td>Async runtime</td></tr>
+      <tr><td><a href="https://github.com/PolyMeilex/rfd">rfd</a></td><td>Native file dialogs</td></tr>
+    </table>
+
+    <h2>License</h2>
+    <p>MIT — free to use, modify, and distribute.</p>
+  </main>
+
+  <div id="lightbox">
+    <img id="lightbox-img" src="" alt="">
+  </div>
+
+  <script>
+    const lb = document.getElementById('lightbox');
+    const lbImg = document.getElementById('lightbox-img');
+    document.querySelectorAll('.screenshots img').forEach(img => {
+      img.addEventListener('click', () => {
+        lbImg.src = img.src;
+        lbImg.alt = img.alt;
+        lb.classList.add('active');
+      });
+    });
+    lb.addEventListener('click', () => lb.classList.remove('active'));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') lb.classList.remove('active'); });
+  </script>
+
+  <footer>
+    <p>
+      <a href="https://github.com/cbz-tools/ihaul">GitHub</a> ·
+      <a href="https://github.com/cbz-tools/ihaul/releases">Releases</a> ·
+      <a href="https://github.com/cbz-tools/ihaul/issues">Issues</a>
+    </p>
+    <p style="margin-top:12px;">© 2026 cbz-tools · MIT License</p>
+  </footer>
+</body>
+</html>
