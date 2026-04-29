@@ -29,9 +29,12 @@ Run it directly — no installation required.
 
 ## Screenshots
 
-![Main window](docs/screenshots/opening.png)
-
-![Transfer in progress](docs/screenshots/transferring.png)
+<table>
+  <tr>
+    <td><img src="docs/screenshots/opening.png" width="100%"></td>
+    <td><img src="docs/screenshots/transferring.png" width="100%"></td>
+  </tr>
+</table>
 
 ## Requirements
 
