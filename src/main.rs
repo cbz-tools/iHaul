@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod device;
 mod i18n;
 mod settings;
