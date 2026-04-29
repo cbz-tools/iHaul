@@ -23,7 +23,7 @@ Download the latest release from [Releases](https://github.com/cbz-tools/iHaul/r
 
 | File | Contents |
 |---|---|
-| `ihaul.exe` | Windows GUI (x64) |
+| `iHaul.exe` | Windows GUI (x64) |
 
 Run it directly — no installation required.
 
@@ -54,7 +54,7 @@ Run it directly — no installation required.
 cargo build --release
 ```
 
-The binary will be at `target\release\ihaul.exe`.
+The binary will be at `target\release\iHaul.exe`.
 
 **Prerequisites:**
 - Rust toolchain (1.85+)
@@ -64,7 +64,7 @@ The binary will be at `target\release\ihaul.exe`.
 ## Usage
 
 1. Connect your iOS device via USB and tap **Trust** on the device if prompted.
-2. Launch `ihaul.exe` — the app detects the device automatically within a few seconds.
+2. Launch `iHaul.exe` — the app detects the device automatically within a few seconds.
 3. Select an app from the sidebar to browse its Documents folder.
 4. Use the toolbar buttons or drag & drop to upload files.
 

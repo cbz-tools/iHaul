@@ -40,9 +40,9 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $dir = "ihaul-$tag-windows-x64"
+          $dir = "iHaul-$tag-windows-x64"
           New-Item -ItemType Directory -Path $dir
-          Copy-Item target/x86_64-pc-windows-msvc/release/ihaul.exe $dir/
+          Copy-Item target/x86_64-pc-windows-msvc/release/iHaul.exe $dir/
           Copy-Item README.md $dir/
           Copy-Item LICENSE   $dir/
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
