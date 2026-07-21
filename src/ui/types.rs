@@ -72,6 +72,7 @@ pub enum DeviceMessage {
 pub(super) enum DeviceStatus {
     Unknown,
     Connected {
+        udid:          String,
         device_name:   String,
         model_name:    String,
         storage_used:  Option<u64>,

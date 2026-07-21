@@ -144,6 +144,7 @@ impl App {
             match msg {
                 DeviceMessage::ScanResult(Ok(Some((info, apps)))) => {
                     self.device_status = DeviceStatus::Connected {
+                        udid:          info.udid,
                         device_name:   info.device_name,
                         model_name:    info.model_name,
                         storage_used:  info.storage_used,
@@ -594,7 +595,7 @@ impl App {
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new(s.waiting).color(W11_TEXT).size(16.0));
                 }
-                DeviceStatus::Connected { device_name, model_name, storage_used, storage_total } => {
+                DeviceStatus::Connected { device_name, model_name, storage_used, storage_total, .. } => {
                     ui.label(egui::RichText::new("●")
                         .color(egui::Color32::from_rgb(16, 124, 16))
                         .size(12.0));
@@ -646,6 +647,11 @@ impl App {
             return;
         }
 
+        let device_udid = match &self.device_status {
+            DeviceStatus::Connected { udid, .. } => udid.clone(),
+            _ => return,
+        };
+
         // sort alphabetically, then partition into favorites and the rest
         let mut all_sorted: Vec<usize> = (0..self.apps.len()).collect();
         {
@@ -653,7 +659,9 @@ impl App {
             all_sorted.sort_by(|&a, &b| apps[a].display_name.cmp(&apps[b].display_name));
         }
         let (fav_sorted, non_fav_sorted): (Vec<usize>, Vec<usize>) = all_sorted.iter().copied()
-            .partition(|&i| self.settings.favorites.contains(&self.apps[i].bundle_id));
+            .partition(|&i| self.settings.favorites_by_device
+                .get(&device_udid)
+                .is_some_and(|favorites| favorites.contains(&self.apps[i].bundle_id)));
 
         let mut clicked_app: Option<(usize, String)> = None;
         let mut toggle_fav:  Option<String>           = None;
@@ -730,8 +738,11 @@ impl App {
         });
 
         if let Some(bid) = toggle_fav {
-            if self.settings.favorites.contains(&bid) { self.settings.favorites.remove(&bid); }
-            else { self.settings.favorites.insert(bid); }
+            let favorites = self.settings.favorites_by_device
+                .entry(device_udid)
+                .or_default();
+            if favorites.contains(&bid) { favorites.remove(&bid); }
+            else { favorites.insert(bid); }
             self.settings.save();
         }
         if let Some((i, bundle_id)) = clicked_app {
