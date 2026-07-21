@@ -3,8 +3,6 @@
 // the blast radius of library upgrades.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, atomic::AtomicBool};
 use idevice::IdeviceService;
 use idevice::services::afc::AfcClient;
 use idevice::services::lockdown::LockdownClient;
@@ -12,6 +10,8 @@ use idevice::usbmuxd::{UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
 
 pub mod apps;
 pub mod house_arrest;
+
+use house_arrest::DocumentsSession;
 
 pub struct DeviceInfo {
     #[allow(dead_code)]
@@ -31,6 +31,170 @@ pub struct AppInfo {
 pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DocumentsPoolKey {
+    udid: String,
+    bundle_id: String,
+}
+
+/// Idle Documents AFC sessions for one device/app container.
+/// The background worker is the sole owner; every session is lent exclusively.
+pub struct DocumentsPool {
+    key: Option<DocumentsPoolKey>,
+    idle: Vec<DocumentsSession>,
+}
+
+impl Default for DocumentsPool {
+    fn default() -> Self {
+        Self { key: None, idle: Vec::new() }
+    }
+}
+
+impl DocumentsPool {
+    pub async fn prepare(&mut self, bundle_id: &str) -> Result<String, String> {
+        let (devices, _) = connect_first_device().await?;
+        let udid = devices[0].udid.clone();
+        let key = DocumentsPoolKey { udid: udid.clone(), bundle_id: bundle_id.to_owned() };
+        if self.key.as_ref() != Some(&key) {
+            self.clear();
+            log::info!("AFC pool scope: device={udid}, app={bundle_id}");
+            self.key = Some(key);
+        }
+        Ok(udid)
+    }
+
+    pub fn clear(&mut self) {
+        if let Some(key) = self.key.take() {
+            log::info!("AFC pool discarded: device={}, app={}, idle={}", key.udid, key.bundle_id, self.idle.len());
+        }
+        self.idle.clear();
+    }
+
+    fn active_udid(&self) -> Option<&str> {
+        self.key.as_ref().map(|key| key.udid.as_str())
+    }
+
+    async fn open_session(&self, bundle_id: &str) -> Result<DocumentsSession, String> {
+        let (devices, _) = connect_first_device().await?;
+        let device = &devices[0];
+        if self.active_udid() != Some(device.udid.as_str()) {
+            return Err("device changed while opening AFC session".to_string());
+        }
+        let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
+        house_arrest::open_documents_session(&provider, bundle_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn take_session(&mut self, bundle_id: &str) -> Result<DocumentsSession, String> {
+        self.prepare(bundle_id).await?;
+        if let Some(session) = self.idle.pop() {
+            log::debug!("AFC pool lease: reused idle session (idle={})", self.idle.len());
+            return Ok(session);
+        }
+        let session = self.open_session(bundle_id).await?;
+        log::info!("AFC pool lease: opened session");
+        Ok(session)
+    }
+
+    fn return_session(&mut self, session: DocumentsSession) {
+        self.idle.push(session);
+        log::debug!("AFC pool return: idle={}", self.idle.len());
+    }
+
+    pub async fn list_dir_with_metadata(
+        &mut self,
+        bundle_id: &str,
+        path: &str,
+    ) -> Result<(Vec<FileEntry>, HashMap<String, (u64, String)>), String> {
+        let mut session = self.take_session(bundle_id).await?;
+        let result = session.list_dir_with_metadata(path).await
+            .map_err(|e| e.to_string())
+            .map(|(entries, info)| {
+                let entries = entries.into_iter()
+                    .map(|e| FileEntry { name: e.name, is_dir: e.is_dir })
+                    .collect();
+                (entries, info)
+            });
+        if result.is_ok() { self.return_session(session); }
+        result
+    }
+
+    pub async fn make_dir(&mut self, bundle_id: &str, path: &str) -> Result<(), String> {
+        let mut session = self.take_session(bundle_id).await?;
+        let result = session.make_dir(path).await.map_err(|e| e.to_string());
+        if result.is_ok() { self.return_session(session); }
+        result
+    }
+
+    pub async fn delete_items(&mut self, bundle_id: &str, abs_paths: &[String]) -> Result<(), String> {
+        let mut session = self.take_session(bundle_id).await?;
+        let result = session.delete_items(abs_paths).await.map_err(|e| e.to_string());
+        if result.is_ok() { self.return_session(session); }
+        result
+    }
+
+    pub async fn rename_file(
+        &mut self,
+        bundle_id: &str,
+        old_abs: &str,
+        new_abs: &str,
+    ) -> Result<(), String> {
+        let mut session = self.take_session(bundle_id).await?;
+        let result = session.rename_file(old_abs, new_abs).await.map_err(|e| e.to_string());
+        if result.is_ok() { self.return_session(session); }
+        result
+    }
+
+    pub async fn scan_export(
+        &mut self,
+        bundle_id: &str,
+        ios_paths: &[String],
+    ) -> Result<(Vec<house_arrest::DownloadTask>, u64), String> {
+        let mut session = self.take_session(bundle_id).await?;
+        let result = session.scan_for_download(ios_paths).await.map_err(|e| e.to_string());
+        if result.is_ok() { self.return_session(session); }
+        result
+    }
+
+    pub async fn take_transfer_sessions(
+        &mut self,
+        bundle_id: &str,
+        count: usize,
+    ) -> Result<(String, Vec<DocumentsSession>), String> {
+        let udid = self.prepare(bundle_id).await?;
+        let count = count.clamp(1, 8);
+        let mut sessions = Vec::with_capacity(count);
+        while sessions.len() < count {
+            if let Some(session) = self.idle.pop() {
+                sessions.push(session);
+            } else {
+                match self.open_session(bundle_id).await {
+                    Ok(session) => sessions.push(session),
+                    Err(e) if sessions.is_empty() => return Err(e),
+                    Err(e) => {
+                        log::warn!("AFC pool transfer lease reduced: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+        log::info!("AFC pool transfer lease: sessions={}", sessions.len());
+        Ok((udid, sessions))
+    }
+
+    pub fn return_transfer_sessions(
+        &mut self,
+        udid: &str,
+        bundle_id: &str,
+        sessions: Vec<DocumentsSession>,
+    ) {
+        let expected = DocumentsPoolKey { udid: udid.to_owned(), bundle_id: bundle_id.to_owned() };
+        if self.key.as_ref() != Some(&expected) { return; }
+        self.idle.extend(sessions);
+        log::info!("AFC pool transfer return: idle={}", self.idle.len());
+    }
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -164,10 +328,20 @@ async fn fetch_app_icons(
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/// Returns true if at least one device is connected (lightweight; no lockdownd).
-pub async fn is_any_device_connected() -> bool {
-    let Ok(mut mux) = UsbmuxdConnection::default().await else { return false; };
-    matches!(mux.get_devices().await, Ok(d) if !d.is_empty())
+/// Checks whether any device is connected (lightweight; no lockdownd).
+/// The caller must distinguish a confirmed empty list from a usbmuxd error.
+pub async fn is_any_device_connected() -> Result<bool, String> {
+    let mut mux = UsbmuxdConnection::default().await.map_err(|e| e.to_string())?;
+    let devices: Vec<UsbmuxdDevice> = mux.get_devices().await.map_err(|e| e.to_string())?;
+    Ok(!devices.is_empty())
+}
+
+/// Checks for this exact device. Errors are intentionally distinct from a
+/// confirmed absence so a usbmuxd hiccup is not treated as DeviceLost.
+pub async fn is_device_connected(udid: &str) -> Result<bool, String> {
+    let mut mux = UsbmuxdConnection::default().await.map_err(|e| e.to_string())?;
+    let devices: Vec<UsbmuxdDevice> = mux.get_devices().await.map_err(|e| e.to_string())?;
+    Ok(devices.iter().any(|device| device.udid == udid))
 }
 
 /// Scans for a connected device and returns its file-sharing app list.
@@ -205,108 +379,4 @@ pub async fn scan_and_list() -> Result<Option<(DeviceInfo, Vec<AppInfo>)>, Strin
     fetch_app_icons(&provider, &mut app_list).await;
 
     Ok(Some((info, app_list)))
-}
-
-/// Lists entries and fetches metadata in a single connection (path must be in "/Documents/..." form).
-pub async fn list_dir_with_metadata(
-    bundle_id: &str,
-    path: &str,
-) -> Result<(Vec<FileEntry>, HashMap<String, (u64, String)>), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-    house_arrest::list_dir_with_metadata(&provider, bundle_id, path)
-        .await
-        .map(|(entries, info)| {
-            let fe = entries.into_iter().map(|e| FileEntry { name: e.name, is_dir: e.is_dir }).collect();
-            (fe, info)
-        })
-        .map_err(|e| e.to_string())
-}
-
-/// Creates a directory at the given path (path must be in "/Documents/..." form).
-pub async fn make_dir(bundle_id: &str, path: &str) -> Result<(), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-    house_arrest::make_dir(&provider, bundle_id, path)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Uploads a single file to the device (current_dir must be in "/Documents/..." form).
-pub async fn upload_single_file(
-    bundle_id: String,
-    current_dir: String,
-    path: PathBuf,
-    cancel: Arc<AtomicBool>,
-    on_progress: impl FnMut(u64, u64),
-) -> Result<(), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("invalid filename")?;
-
-    house_arrest::upload_file_with_progress(&provider, &bundle_id, &path, &current_dir, filename, &cancel, on_progress)
-        .await
-        .map_err(|e| { let s = e.to_string(); if s != "cancelled" { log::error!("upload_file failed: file={filename}, error={s}"); } s })
-}
-
-/// Deletes multiple files or folders (abs_paths must be absolute paths in "/Documents/..." form).
-pub async fn delete_items(bundle_id: &str, abs_paths: &[String]) -> Result<(), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-
-    for path in abs_paths {
-        if let Err(e) = house_arrest::delete_item(&provider, bundle_id, path).await {
-            log::warn!("delete skipped: {path}: {e}");
-        }
-    }
-    Ok(())
-}
-
-/// Renames a file or folder (old_abs and new_abs must be absolute paths).
-pub async fn rename_file(bundle_id: &str, old_abs: &str, new_abs: &str) -> Result<(), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-    house_arrest::rename_file(&provider, bundle_id, old_abs, new_abs)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Recursively scans selected iOS paths and returns download tasks + total bytes.
-pub async fn scan_export(
-    bundle_id: &str,
-    ios_paths: &[String],
-) -> Result<(Vec<house_arrest::DownloadTask>, u64), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-    house_arrest::scan_for_download(&provider, bundle_id, ios_paths)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Downloads a file in chunks and writes directly to dest (constant memory usage).
-pub async fn download_file(
-    bundle_id: &str,
-    current_dir: &str,
-    filename: &str,
-    dest: PathBuf,
-    cancel: Arc<AtomicBool>,
-    on_progress: impl FnMut(u64, u64),
-) -> Result<(), String> {
-    let (devices, _) = connect_first_device().await?;
-    let device = &devices[0];
-    let provider = device.to_provider(UsbmuxdAddr::default(), "ihaul");
-
-    house_arrest::download_file_with_progress(&provider, bundle_id, current_dir, filename, &dest, &cancel, on_progress)
-        .await
-        .map_err(|e| { let s = e.to_string(); if s != "cancelled" { log::error!("download_file failed: file={filename}, error={s}"); } s })
 }

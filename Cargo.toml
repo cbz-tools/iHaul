@@ -11,14 +11,11 @@ license = "MIT"
 repository = "https://github.com/cbz-tools/iHaul"
 
 # ---------------------------------------------------------------------------
-# idevice — pinned rev; verify breaking changes before updating
+# idevice — AFC/house_arrest client
 # ---------------------------------------------------------------------------
-[dependencies.idevice]
-git = "https://github.com/jkcoxson/idevice"
-rev = "6d184038f86abf9297844158768e8d791167b2a2"
-features = ["house_arrest", "afc", "usbmuxd", "installation_proxy", "springboardservices"]
 
 [dependencies]
+idevice = { version = "0.1.65", features = ["house_arrest", "afc", "usbmuxd", "installation_proxy", "springboardservices"] }
 tokio = { version = "1", features = ["full"] }
 eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts"] }
 rfd = "0.15"
