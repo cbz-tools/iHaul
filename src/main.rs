@@ -18,7 +18,10 @@ fn init_log() {
         let _ = std::fs::rename(&current, &old);
     }
     if let Ok(file) = std::fs::File::create(&current) {
-        let config = simplelog::ConfigBuilder::new()
+        let mut config = simplelog::ConfigBuilder::new();
+        let _ = config.set_time_offset_to_local();
+        let config = config
+            .set_time_format_rfc3339()
             .add_filter_ignore_str("arboard")
             .add_filter_ignore_str("egui_winit")
             .add_filter_ignore_str("egui")
