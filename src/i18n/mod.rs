@@ -28,6 +28,9 @@ pub struct S {
     pub connect_failed:   &'static str,
     pub error_prefix:     &'static str,
     pub disconnected_msg: &'static str,
+    pub storage_free:     &'static str,
+    pub storage_used:     &'static str,
+    pub storage_total:    &'static str,
     // sidebar
     #[allow(dead_code)]
     pub apps:    &'static str,
@@ -72,6 +75,8 @@ pub struct S {
     pub ctx_export:     &'static str,
     pub ctx_rename:     &'static str,
     pub ctx_delete:     &'static str,
+    pub ctx_add_favorite:    &'static str,
+    pub ctx_remove_favorite: &'static str,
     // buttons
     pub btn_ok:     &'static str,
     pub btn_delete: &'static str,

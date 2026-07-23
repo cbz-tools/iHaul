@@ -596,9 +596,15 @@ impl App {
                     ui.label(egui::RichText::new(s.waiting).color(W11_TEXT).size(16.0));
                 }
                 DeviceStatus::Connected { device_name, model_name, storage_used, storage_total, .. } => {
-                    ui.label(egui::RichText::new("●")
-                        .color(egui::Color32::from_rgb(16, 124, 16))
-                        .size(12.0));
+                    let (indicator_rect, _) = ui.allocate_exact_size(
+                        egui::Vec2::splat(12.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().circle_filled(
+                        indicator_rect.center(),
+                        5.0,
+                        egui::Color32::from_rgb(16, 124, 16),
+                    );
                     ui.add_space(4.0);
                     let name_part = if model_name.is_empty() {
                         device_name.clone()
@@ -607,7 +613,20 @@ impl App {
                     };
                     ui.label(egui::RichText::new(&name_part).color(W11_TEXT).strong().size(19.0));
                     let storage_str = match (storage_used, storage_total) {
-                        (Some(u), Some(t)) => format!("{} / {}", format_size(*u), format_size(*t)),
+                        (Some(u), Some(t)) if *t > 0 => {
+                            let free = t.saturating_sub(*u);
+                            let used_percent = u.saturating_mul(100) / t;
+                            format!(
+                                "{} {} / {} {} ({}%) / {} {}",
+                                s.storage_free,
+                                format_size(free),
+                                s.storage_used,
+                                format_size(*u),
+                                used_percent,
+                                s.storage_total,
+                                format_size(*t),
+                            )
+                        }
                         _ => String::new(),
                     };
                     if !storage_str.is_empty() {
@@ -692,44 +711,46 @@ impl App {
 
         egui::ScrollArea::vertical().id_salt("app_scroll").show(ui, |ui| {
             // ── Favorites section ────────────────────────────────────────
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new(s.sidebar_favorites)
-                    .color(egui::Color32::from_gray(130)).size(11.0).strong());
-            });
-            ui.add_space(2.0);
-            for &real_idx in &fav_sorted {
-                let bundle_id    = self.apps[real_idx].bundle_id.clone();
-                let display_name = self.apps[real_idx].display_name.clone();
-                let selected     = self.selected_app_idx == Some(real_idx);
-                let tex          = self.app_icons.get(&bundle_id);
-                let (row_resp, star_clicked) =
-                    sidebar_row(ui, &bundle_id, &display_name, selected, true, tex, "fav");
-                if star_clicked {
-                    toggle_fav = Some(bundle_id.clone());
-                } else if row_resp.clicked() && !selected {
-                    clicked_app = Some((real_idx, bundle_id.clone()));
+            if !fav_sorted.is_empty() {
+                sidebar_section_header(ui, s.sidebar_favorites);
+                for &real_idx in &fav_sorted {
+                    let bundle_id    = self.apps[real_idx].bundle_id.clone();
+                    let display_name = self.apps[real_idx].display_name.clone();
+                    let selected     = self.selected_app_idx == Some(real_idx);
+                    let tex          = self.app_icons.get(&bundle_id);
+                    let row_resp = sidebar_row(ui, &display_name, selected, tex);
+                    let remove_favorite = std::cell::Cell::new(false);
+                    row_resp.context_menu(|ui| {
+                        if ui.button(s.ctx_remove_favorite).clicked() {
+                            remove_favorite.set(true);
+                            ui.close();
+                        }
+                    });
+                    if remove_favorite.get() {
+                        toggle_fav = Some(bundle_id.clone());
+                    } else if row_resp.clicked() && !selected {
+                        clicked_app = Some((real_idx, bundle_id.clone()));
+                    }
                 }
+                ui.add_space(8.0);
             }
-            ui.add_space(8.0);
 
             // ── All apps section ─────────────────────────────────────────
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new(s.sidebar_all_apps)
-                    .color(egui::Color32::from_gray(130)).size(11.0).strong());
-            });
-            ui.add_space(2.0);
+            sidebar_section_header(ui, s.sidebar_all_apps);
             for &real_idx in &non_fav_sorted {
                 let bundle_id    = self.apps[real_idx].bundle_id.clone();
                 let display_name = self.apps[real_idx].display_name.clone();
                 let selected     = self.selected_app_idx == Some(real_idx);
                 let tex          = self.app_icons.get(&bundle_id);
-                let (row_resp, star_clicked) =
-                    sidebar_row(ui, &bundle_id, &display_name, selected, false, tex, "all");
-                if star_clicked {
+                let row_resp = sidebar_row(ui, &display_name, selected, tex);
+                let add_favorite = std::cell::Cell::new(false);
+                row_resp.context_menu(|ui| {
+                    if ui.button(s.ctx_add_favorite).clicked() {
+                        add_favorite.set(true);
+                        ui.close();
+                    }
+                });
+                if add_favorite.get() {
                     toggle_fav = Some(bundle_id.clone());
                 } else if row_resp.clicked() && !selected {
                     clicked_app = Some((real_idx, bundle_id.clone()));
@@ -988,7 +1009,8 @@ impl App {
             .striped(false)
             .resizable(true)
             .max_scroll_height(file_list_h)
-            .column(Column::remainder().at_least(120.0))
+            // Keep Name synchronized with the viewport after the fixed columns.
+            .column(Column::remainder().resizable(false).at_least(120.0))
             .column(Column::initial(62.0).resizable(true).at_least(50.0))
             .column(Column::initial(85.0).resizable(true).at_least(60.0))
             .column(Column::initial(138.0).resizable(true).at_least(100.0))
@@ -1669,16 +1691,13 @@ impl App {
 
 // ─── Sidebar row helper (free function for borrow separation) ────────────────
 /// Renders one pill-shaped sidebar row. Uses painter only (no widget allocation),
-/// so the entire row is clickable. Returns (row_response, star_was_clicked).
+/// so the entire row is clickable.
 fn sidebar_row(
     ui:           &mut egui::Ui,
-    bundle_id:    &str,
     display_name: &str,
     selected:     bool,
-    is_fav:       bool,
     texture:      Option<&egui::TextureHandle>,
-    section:      &str,
-) -> (egui::Response, bool) {
+) -> egui::Response {
     let row_h  = 36.0;
     let full_w = ui.available_width();
     let (row_rect, row_resp) = ui.allocate_exact_size(
@@ -1707,29 +1726,8 @@ fn sidebar_row(
     let content_rect = pill.shrink2(egui::Vec2::new(8.0, 0.0));
     let cy           = row_rect.center().y;
 
-    // ── star / outline-star (24 px on left) — painter only, detected via Sense::click()
-    let star_w    = 24.0;
-    let star_rect = egui::Rect::from_min_size(
-        content_rect.min,
-        egui::Vec2::new(star_w, row_h),
-    );
-    let star_color = if is_fav {
-        egui::Color32::from_rgb(245, 180, 0)
-    } else {
-        egui::Color32::from_gray(200)
-    };
-    ui.painter().text(
-        egui::pos2(star_rect.center().x, cy + 4.0),
-        egui::Align2::CENTER_CENTER,
-        if is_fav { "★" } else { "☆" },
-        egui::FontId::proportional(22.0),
-        star_color,
-    );
-    let star_id   = egui::Id::new((bundle_id, section, "star"));
-    let star_resp = ui.interact(star_rect, star_id, egui::Sense::click());
-
-    // ── app icon (offset 24+4=28 px, 24×24)
-    let icon_x = content_rect.min.x + star_w + 4.0;
+    // ── app icon (24×24)
+    let icon_x = content_rect.min.x;
     if let Some(tex) = texture {
         let icon_rect = egui::Rect::from_center_size(
             egui::pos2(icon_x + 12.0, cy),
@@ -1753,7 +1751,32 @@ fn sidebar_row(
         text_color,
     );
 
-    (row_resp, star_resp.clicked())
+    row_resp
+}
+
+/// Renders a sidebar section label with a full-width separator.
+fn sidebar_section_header(ui: &mut egui::Ui, label: &str) {
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::Vec2::new(ui.available_width(), 28.0),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_gray(238));
+    ui.painter().text(
+        egui::pos2(rect.min.x + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        W11_TEXT,
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.min.x + 12.0, rect.max.y - 0.5),
+            egui::pos2(rect.max.x - 12.0, rect.max.y - 0.5),
+        ],
+        egui::Stroke::new(1.0, W11_BORDER),
+    );
+    ui.add_space(4.0);
 }
 
 // ─── eframe::App ─────────────────────────────────────────────────────────────
