@@ -18,7 +18,7 @@ use egui_material_icons::icons::{
     ICON_ARROW_BACK, ICON_ARROW_FORWARD, ICON_ARROW_UPWARD,
     ICON_UPLOAD, ICON_CREATE_NEW_FOLDER, ICON_DOWNLOAD,
     ICON_DRIVE_FILE_RENAME_OUTLINE, ICON_DELETE, ICON_CANCEL,
-    ICON_CONTENT_PASTE, ICON_FOLDER, ICON_INSERT_DRIVE_FILE, ICON_SETTINGS,
+    ICON_CONTENT_PASTE, ICON_FOLDER, ICON_INSERT_DRIVE_FILE, ICON_SETTINGS, ICON_SEARCH,
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -43,6 +43,7 @@ pub struct App {
     sort_column:        SortColumn,
     sort_ascending:     bool,
     filter_text:        String,
+    filter_focus_request: bool,
     // Navigation
     current_path:   String,
     back_stack:     Vec<String>,
@@ -106,6 +107,7 @@ impl App {
             sort_column:     SortColumn::Name,
             sort_ascending:  true,
             filter_text:     String::new(),
+            filter_focus_request: false,
             current_path:    "/Documents".to_string(),
             back_stack:      Vec::new(),
             forward_stack:   Vec::new(),
@@ -241,6 +243,7 @@ impl App {
         self.selected_files.clear();
         self.anchor_file = None;
         self.filter_text.clear();
+        self.filter_focus_request = false;
         self.file_load_state = FileLoadState::Empty;
         self.clear_transfers();
         self.transfer_cancel   = None;
@@ -462,6 +465,19 @@ impl App {
             self.navigate_to(parent);
         }
     }
+
+    fn prune_filter_selection(&mut self, filter_lower: &str) {
+        let visible_names: HashSet<String> = self.files.iter()
+            .filter(|entry| {
+                filter_lower.is_empty() || entry.name.to_lowercase().contains(filter_lower)
+            })
+            .map(|entry| entry.name.clone())
+            .collect();
+        self.selected_files.retain(|name| visible_names.contains(name));
+        if self.anchor_file.as_ref().is_some_and(|name| !visible_names.contains(name)) {
+            self.anchor_file = None;
+        }
+    }
 }
 
 // ─── App impl: update() sub-methods ──────────────────────────────────────────
@@ -474,8 +490,8 @@ impl App {
 
         // Do not treat Ctrl+V as a file paste when a text input has focus
         let text_edit_focused = ctx.memory(|m| {
-            // TODO: file_filter_input is currently commented out
-            m.has_focus(egui::Id::new("rename_text_edit"))
+            m.has_focus(egui::Id::new("file_filter_input"))
+            || m.has_focus(egui::Id::new("rename_text_edit"))
             || m.has_focus(egui::Id::new("new_folder_input"))
         });
 
@@ -499,20 +515,20 @@ impl App {
         let alt_left     = ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)  && i.modifiers.alt);
         let alt_right    = ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) && i.modifiers.alt);
         let ctrl_shift_n = ctx.input(|i| i.key_pressed(egui::Key::N)          && i.modifiers.ctrl && i.modifiers.shift);
+        let ctrl_f        = ctx.input(|i| i.key_pressed(egui::Key::F)          && i.modifiers.ctrl);
         let mouse_back   = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Extra1));
         let mouse_forward= ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Extra2));
 
-        // TODO: when search filter is re-enabled, Esc should clear the filter text
-        // if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !self.filter_text.is_empty() {
-        //     self.filter_text.clear();
-        // }
+        if ctrl_f && !is_busy && !self.show_settings && self.selected_app_idx.is_some() {
+            self.filter_focus_request = true;
+        }
 
-        if !is_busy && app_sel {
+        if !is_busy && !text_edit_focused && app_sel {
             if alt_left  || mouse_back    { self.navigate_back(); }
             if alt_right || mouse_forward { self.navigate_forward(); }
         }
 
-        if !is_busy {
+        if !is_busy && !text_edit_focused {
             if ctrl_v && app_sel  { self.trigger_paste(); }
             if ctrl_a && app_sel  { self.selected_files = self.files.iter().map(|e| e.name.clone()).collect(); }
             if del_key && has_sel { self.trigger_delete_confirm(); }
@@ -533,7 +549,7 @@ impl App {
 
         // D&D
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if !dropped.is_empty() && !is_busy {
+        if !dropped.is_empty() && !is_busy && !text_edit_focused {
             if let Some(bid) = self.selected_bundle_id() {
                 let paths: Vec<PathBuf> = dropped.iter().filter_map(|f| f.path.clone()).collect();
                 if !paths.is_empty() {
@@ -849,7 +865,7 @@ impl App {
             ui.add_space(4.0);
             egui::Frame::new()
                 .fill(W11_SURFACE)
-                .stroke(egui::Stroke::new(1.0, W11_BORDER))
+                .stroke(egui::Stroke::new(1.0_f32, W11_BORDER))
                 .corner_radius(egui::CornerRadius::same(4))
                 .inner_margin(egui::Margin::symmetric(10, 4))
                 .show(ui, |ui| {
@@ -938,8 +954,6 @@ impl App {
 
     /// Status bar row: current operation (left) and selection count (right).
     fn show_status_bar(&mut self, ui: &mut egui::Ui, s: &crate::i18n::S) {
-        // TODO: add a TextEdit here when re-enabling the search filter.
-        // Disabled: DEL key incorrectly triggers file deletion when the filter is focused.
         ui.horizontal(|ui| {
             let status_label: Option<String> = if self.has_active_transfers() {
                 let active_count = self.transfers.iter()
@@ -957,6 +971,71 @@ impl App {
                 ui.colored_label(egui::Color32::from_gray(120), label);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                const FILTER_INPUT_WIDTH: f32 = 180.0;
+                const FILTER_INPUT_HEIGHT: f32 = 24.0;
+                const FILTER_ICON_SLOT_WIDTH: f32 = 24.0;
+                const FILTER_ICON_SIZE: f32 = 16.0;
+                const FILTER_CLEAR_BUTTON_SIZE: f32 = 18.0;
+                const FILTER_CLEAR_BUTTON_RIGHT_PADDING: f32 = 4.0;
+
+                let filter_resp = ui.add_sized(
+                    [FILTER_INPUT_WIDTH, FILTER_INPUT_HEIGHT],
+                    egui::TextEdit::singleline(&mut self.filter_text)
+                        .id(egui::Id::new("file_filter_input"))
+                        .hint_text(s.filter_hint),
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(FILTER_ICON_SLOT_WIDTH, FILTER_INPUT_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.add_space((FILTER_ICON_SLOT_WIDTH - FILTER_ICON_SIZE) * 0.5);
+                        ui.label(
+                            egui::RichText::new(ICON_SEARCH.codepoint.to_string())
+                                .font(egui::FontId::new(
+                                    FILTER_ICON_SIZE,
+                                    egui::FontFamily::Name("material-icons".into()),
+                                )),
+                        );
+                    },
+                );
+                if self.filter_focus_request {
+                    filter_resp.request_focus();
+                    self.filter_focus_request = false;
+                }
+                if !self.filter_text.is_empty() {
+                    let clear_rect = egui::Rect::from_center_size(
+                        egui::pos2(
+                            filter_resp.rect.right()
+                                - FILTER_CLEAR_BUTTON_RIGHT_PADDING
+                                - FILTER_CLEAR_BUTTON_SIZE * 0.5,
+                            filter_resp.rect.center().y,
+                        ),
+                        egui::Vec2::splat(FILTER_CLEAR_BUTTON_SIZE),
+                    );
+                    let clear_resp = ui
+                        .interact(
+                            clear_rect,
+                            filter_resp.id.with("filter_clear_button"),
+                            egui::Sense::click(),
+                        )
+                        .on_hover_text(s.tip_cancel);
+                    ui.painter().text(
+                        clear_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        ICON_CANCEL.codepoint,
+                        egui::FontId::new(
+                            14.0,
+                            egui::FontFamily::Name("material-icons".into()),
+                        ),
+                        W11_TEXT,
+                    );
+                    if clear_resp.clicked() {
+                        self.filter_text.clear();
+                        filter_resp.request_focus();
+                    }
+                }
+                let filter_lower = self.filter_text.to_lowercase();
+                self.prune_filter_selection(&filter_lower);
                 let total_count = self.files.len();
                 ui.colored_label(egui::Color32::from_gray(150),
                     format!("{}{}", total_count, s.items_unit));
@@ -966,6 +1045,8 @@ impl App {
                 }
             });
         });
+        let filter_lower = self.filter_text.to_lowercase();
+        self.prune_filter_selection(&filter_lower);
         ui.separator();
     }
 
@@ -979,6 +1060,7 @@ impl App {
         can_act: bool,
         has_sel: bool,
         sel_has_dir: bool,
+        filter_lower: &str,
         s: &crate::i18n::S,
     ) -> FilePanelActions {
         if let FileLoadState::Error(e) = &self.file_load_state {
@@ -1030,7 +1112,7 @@ impl App {
                 hdr_col!(s.col_name, SortColumn::Name);
                 hdr_col!(s.col_kind, SortColumn::Kind);
                 header.col(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         let r = ui.add(egui::Label::new(
                             egui::RichText::new(format!("{}{}", s.col_size, arrow(SortColumn::Size))).strong()
                         ).sense(egui::Sense::click()));
@@ -1172,8 +1254,7 @@ impl App {
 
         // empty folder / background area below the table — context menu
         if display_files.is_empty() {
-            // TODO: when the filter is re-enabled, switch between no_match / no_files based on filter_lower
-            let msg = s.no_files;
+            let msg = if filter_lower.is_empty() { s.no_files } else { s.no_match };
             let avail = ui.available_rect_before_wrap();
             let resp = ui.allocate_rect(avail, egui::Sense::click());
             ui.painter().text(avail.center(), egui::Align2::CENTER_CENTER, msg,
@@ -1253,10 +1334,12 @@ impl App {
         let app_name  = self.apps[idx].display_name.clone();
         let bundle_id = self.apps[idx].bundle_id.clone();
         let can_act   = matches!(self.device_status, DeviceStatus::Connected { .. }) && !is_busy;
-        let has_sel   = !self.selected_files.is_empty();
-        let sel_has_dir = self.selected_files.iter()
+        let mut filter_lower = self.filter_text.to_lowercase();
+        self.prune_filter_selection(&filter_lower);
+        let mut has_sel   = !self.selected_files.is_empty();
+        let mut sel_has_dir = self.selected_files.iter()
             .any(|n| self.files.iter().any(|e| &e.name == n && e.is_dir));
-        let can_export = can_act && has_sel;
+        let mut can_export = can_act && has_sel;
 
         // ── Row 1: navigation + address bar ──────────────────────────────
         self.show_navigation_bar(ui, can_act, &app_name, s);
@@ -1268,9 +1351,18 @@ impl App {
         // ── Status row: current operation (left) / count (right) ──────────
         self.show_status_bar(ui, s);
 
-        // ── Sorted file list ──────────────────────────────────────────────
-        // TODO: filter with filter_lower when search filter is re-enabled.
-        let mut display_files: Vec<&FileEntry> = self.files.iter().collect();
+        // ── Filtered and sorted file list ─────────────────────────────────
+        filter_lower = self.filter_text.to_lowercase();
+        self.prune_filter_selection(&filter_lower);
+        has_sel = !self.selected_files.is_empty();
+        sel_has_dir = self.selected_files.iter()
+            .any(|n| self.files.iter().any(|e| &e.name == n && e.is_dir));
+        can_export = can_act && has_sel;
+        let mut display_files: Vec<&FileEntry> = self.files.iter()
+            .filter(|entry| {
+                filter_lower.is_empty() || entry.name.to_lowercase().contains(&filter_lower)
+            })
+            .collect();
         {
             let sort_col = self.sort_column;
             let sort_asc = self.sort_ascending;
@@ -1345,7 +1437,7 @@ impl App {
         // ── Header + file list ───────────────────────────────────────────
         let actions = self.build_file_table(
             ui, ctx, &display_files, file_list_h,
-            can_act, has_sel, sel_has_dir, s,
+            can_act, has_sel, sel_has_dir, &filter_lower, s,
         );
 
         // ── Apply deferred actions ────────────────────────────────────────
@@ -1447,8 +1539,6 @@ impl App {
         } else if do_reset {
             self.settings.lang        = crate::i18n::Lang::default();
             self.settings.concurrency = 2;
-            // font is set once at startup — do not change on language switch
-            // changes take effect when OK is clicked
         }
     }
 
@@ -1774,7 +1864,7 @@ fn sidebar_section_header(ui: &mut egui::Ui, label: &str) {
             egui::pos2(rect.min.x + 12.0, rect.max.y - 0.5),
             egui::pos2(rect.max.x - 12.0, rect.max.y - 0.5),
         ],
-        egui::Stroke::new(1.0, W11_BORDER),
+        egui::Stroke::new(1.0_f32, W11_BORDER),
     );
     ui.add_space(4.0);
 }

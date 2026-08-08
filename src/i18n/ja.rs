@@ -13,7 +13,7 @@ pub static S: super::S = super::S {
     select_app:       "← アプリを選択してください",
     no_files:         "ファイルがありません",
     no_match:         "フィルタ条件に一致するファイルがありません",
-    filter_hint:      "🔍 フィルタ",
+    filter_hint:      "Filter",
     selected_suffix:  "件選択中",
     items_unit:       "件",
     folder_kind:      "フォルダ",

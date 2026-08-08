@@ -13,7 +13,7 @@ pub static S: super::S = super::S {
     select_app:       "← 请选择应用",
     no_files:         "没有文件",
     no_match:         "没有符合条件的文件",
-    filter_hint:      "🔍 筛选",
+    filter_hint:      "Filter",
     selected_suffix:  "个已选",
     items_unit:       "个",
     folder_kind:      "文件夹",

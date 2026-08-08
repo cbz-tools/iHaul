@@ -13,7 +13,7 @@ pub static S: super::S = super::S {
     select_app:       "← Select an app",
     no_files:         "No files",
     no_match:         "No matching files",
-    filter_hint:      "🔍 Filter",
+    filter_hint:      "Filter",
     selected_suffix:  " selected",
     items_unit:       " items",
     folder_kind:      "Folder",

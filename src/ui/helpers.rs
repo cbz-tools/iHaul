@@ -99,22 +99,22 @@ pub(super) fn apply_win11_theme(ctx: &egui::Context) {
     // button / widget colors
     vis.widgets.inactive.weak_bg_fill  = W11_TOOLBAR;
     vis.widgets.inactive.bg_fill       = W11_TOOLBAR;
-    vis.widgets.inactive.bg_stroke     = egui::Stroke::new(1.0, W11_BORDER);
-    vis.widgets.inactive.fg_stroke     = egui::Stroke::new(1.0, W11_TEXT);
+    vis.widgets.inactive.bg_stroke     = egui::Stroke::new(1.0_f32, W11_BORDER);
+    vis.widgets.inactive.fg_stroke     = egui::Stroke::new(1.0_f32, W11_TEXT);
     vis.widgets.hovered.weak_bg_fill   = W11_HOVER;
     vis.widgets.hovered.bg_fill        = W11_HOVER;
-    vis.widgets.hovered.bg_stroke      = egui::Stroke::new(1.0, W11_ACCENT);
-    vis.widgets.hovered.fg_stroke      = egui::Stroke::new(1.5, W11_TEXT);
+    vis.widgets.hovered.bg_stroke      = egui::Stroke::new(1.0_f32, W11_ACCENT);
+    vis.widgets.hovered.fg_stroke      = egui::Stroke::new(1.5_f32, W11_TEXT);
     vis.widgets.active.weak_bg_fill    = egui::Color32::from_rgb(204, 228, 247);
     vis.widgets.active.bg_fill         = egui::Color32::from_rgb(204, 228, 247);
     vis.widgets.noninteractive.weak_bg_fill = W11_PANEL;
     vis.widgets.noninteractive.bg_fill      = W11_PANEL;
-    vis.widgets.noninteractive.bg_stroke    = egui::Stroke::new(1.0, W11_BORDER);
-    vis.widgets.noninteractive.fg_stroke    = egui::Stroke::new(1.0, W11_TEXT_SEC);
+    vis.widgets.noninteractive.bg_stroke    = egui::Stroke::new(1.0_f32, W11_BORDER);
+    vis.widgets.noninteractive.fg_stroke    = egui::Stroke::new(1.0_f32, W11_TEXT_SEC);
 
     // selection colors (table rows and selectable_label)
     vis.selection.bg_fill = W11_SEL;
-    vis.selection.stroke  = egui::Stroke::new(1.0, W11_ACCENT);
+    vis.selection.stroke  = egui::Stroke::new(1.0_f32, W11_ACCENT);
 
     // link / accent color
     vis.hyperlink_color  = W11_ACCENT;
@@ -189,7 +189,7 @@ pub(super) fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(egui::Color32::WHITE))
             .fill(W11_DANGER)
-            .stroke(egui::Stroke::new(1.0, W11_DANGER))
+            .stroke(egui::Stroke::new(1.0_f32, W11_DANGER))
             .min_size(egui::Vec2::new(80.0, 28.0)),
     )
 }
@@ -199,7 +199,7 @@ pub(super) fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(egui::Color32::WHITE))
             .fill(W11_ACCENT)
-            .stroke(egui::Stroke::new(1.0, W11_ACCENT))
+            .stroke(egui::Stroke::new(1.0_f32, W11_ACCENT))
             .min_size(egui::Vec2::new(80.0, 28.0)),
     )
 }
@@ -220,38 +220,87 @@ pub(super) fn dialog_frame() -> egui::Frame {
 
 // ─── Font initialization ─────────────────────────────────────────────────────
 
-/// Loads CJK fonts in priority order and registers them for both Proportional and Monospace families.
-/// Must be called exactly once at startup (not on language switch).
-/// Registers CJK and material-icons fonts in a single set_fonts() call so that
-/// the material-icons family has "cjk" as a fallback, eliminating the
-/// "Failed to find replacement characters" warning.
+const WINDOWS_FONT_CANDIDATES: &[(&str, &str, u32)] = &[
+    ("jp_meiryo", r"C:\Windows\Fonts\meiryo.ttc", 0),
+    ("jp_yugothic", r"C:\Windows\Fonts\YuGothM.ttc", 0),
+    ("jp_msgothic", r"C:\Windows\Fonts\msgothic.ttc", 2),
+    ("jp_msmincho", r"C:\Windows\Fonts\msmincho.ttc", 0),
+    ("zh_yahei", r"C:\Windows\Fonts\msyh.ttc", 0),
+    ("zh_yahei_bold", r"C:\Windows\Fonts\msyhbd.ttc", 0),
+    ("zh_simsun", r"C:\Windows\Fonts\simsun.ttc", 0),
+    ("zh_simhei", r"C:\Windows\Fonts\simhei.ttf", 0),
+];
+
+fn append_font(
+    fonts: &mut egui::FontDefinitions,
+    font_name: &str,
+    data: Vec<u8>,
+    index: u32,
+) {
+    fonts.font_data.insert(
+        font_name.to_owned(),
+        std::sync::Arc::new(egui::FontData {
+            font: std::borrow::Cow::Owned(data),
+            index,
+            tweak: egui::FontTweak::default(),
+        }),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push(font_name.to_owned());
+    }
+}
+
+/// Loads every readable Windows CJK font as a fallback in the fixed Viewer order.
+/// Material Icons remain in their independent family.
 pub(super) fn setup_font(ctx: &egui::Context) {
-    let candidates = [
-        r"C:\Windows\Fonts\yugothic.ttc",   // Yu Gothic (Windows 10+)
-        r"C:\Windows\Fonts\YuGothM.ttc",
-        r"C:\Windows\Fonts\meiryo.ttc",      // Meiryo
-        r"C:\Windows\Fonts\msgothic.ttc",    // MS Gothic
-    ];
     let mut fonts = egui::FontDefinitions::default();
-    for path in &candidates {
-        if let Ok(data) = std::fs::read(path) {
-            fonts.font_data.insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
-            fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "cjk".to_owned());
-            fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "cjk".to_owned());
-            break;
-        }
+    for (font_name, path, index) in WINDOWS_FONT_CANDIDATES {
+        let Ok(data) = std::fs::read(path) else { continue; };
+        append_font(&mut fonts, font_name, data, *index);
     }
 
-    // Register material-icons manually (instead of egui_material_icons::initialize)
-    // so we can add "cjk" as fallback for replacement characters ('◻', '?').
-    let fi = egui_material_icons::font_insert();
-    fonts.font_data.insert(fi.name.clone(), fi.data.into());
-    fonts.families.insert(
-        egui::FontFamily::Name("material-icons".into()),
-        vec![fi.name, "cjk".to_owned()],
-    );
-
     ctx.set_fonts(fonts);
-    // Note: egui_material_icons::initialize() is intentionally omitted —
-    // the font is registered above with the cjk fallback included.
+    egui_material_icons::initialize(ctx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn viewer_font_candidates_preserve_ttc_indices_and_append_order() {
+        assert_eq!(WINDOWS_FONT_CANDIDATES, &[
+            ("jp_meiryo", r"C:\Windows\Fonts\meiryo.ttc", 0),
+            ("jp_yugothic", r"C:\Windows\Fonts\YuGothM.ttc", 0),
+            ("jp_msgothic", r"C:\Windows\Fonts\msgothic.ttc", 2),
+            ("jp_msmincho", r"C:\Windows\Fonts\msmincho.ttc", 0),
+            ("zh_yahei", r"C:\Windows\Fonts\msyh.ttc", 0),
+            ("zh_yahei_bold", r"C:\Windows\Fonts\msyhbd.ttc", 0),
+            ("zh_simsun", r"C:\Windows\Fonts\simsun.ttc", 0),
+            ("zh_simhei", r"C:\Windows\Fonts\simhei.ttf", 0),
+        ]);
+
+        let defaults = egui::FontDefinitions::default();
+        let mut fonts = defaults.clone();
+        for (font_name, _, index) in WINDOWS_FONT_CANDIDATES {
+            append_font(&mut fonts, font_name, vec![0], *index);
+            assert_eq!(fonts.font_data[*font_name].index, *index);
+        }
+
+        let expected_names: Vec<String> = WINDOWS_FONT_CANDIDATES
+            .iter()
+            .map(|(font_name, _, _)| (*font_name).to_owned())
+            .collect();
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let family_fonts = &fonts.families[&family];
+            assert_eq!(
+                &family_fonts[defaults.families[&family].len()..],
+                expected_names.as_slice()
+            );
+        }
+    }
 }

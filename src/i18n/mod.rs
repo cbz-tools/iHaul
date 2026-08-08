@@ -40,9 +40,7 @@ pub struct S {
     // file panel
     pub select_app:      &'static str,
     pub no_files:        &'static str,
-    #[allow(dead_code)]
     pub no_match:        &'static str,
-    #[allow(dead_code)]
     pub filter_hint:     &'static str,
     pub selected_suffix: &'static str,  // " selected" / "件選択中" / "个已选"
     pub items_unit:      &'static str,  // " items" / "件" / "个"

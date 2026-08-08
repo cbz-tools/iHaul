@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+#![allow(linker_messages)]
 
 mod device;
 mod i18n;
