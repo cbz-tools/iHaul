@@ -27,7 +27,9 @@ pub async fn open_documents_session(
     bundle_id: &str,
 ) -> Result<DocumentsSession, Box<dyn std::error::Error>> {
     let ha = HouseArrestClient::connect(provider).await?;
-    Ok(DocumentsSession { afc: ha.vend_documents(bundle_id).await? })
+    Ok(DocumentsSession {
+        afc: ha.vend_documents(bundle_id).await?,
+    })
 }
 
 impl DocumentsSession {
@@ -49,10 +51,16 @@ impl DocumentsSession {
                 let is_dir = fi.st_ifmt == "S_IFDIR";
                 let size = fi.size as u64;
                 let modified = fi.modified.format("%Y/%m/%d %H:%M").to_string();
-                entries.push(DirEntry { name: name.clone(), is_dir });
+                entries.push(DirEntry {
+                    name: name.clone(),
+                    is_dir,
+                });
                 info.insert(name, (size, modified));
             } else {
-                entries.push(DirEntry { name, is_dir: false });
+                entries.push(DirEntry {
+                    name,
+                    is_dir: false,
+                });
             }
         }
 
@@ -65,7 +73,10 @@ impl DocumentsSession {
     }
 
     /// Deletes all requested paths with this same AFC connection.
-    pub async fn delete_items(&mut self, abs_paths: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete_items(
+        &mut self,
+        abs_paths: &[String],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut first_error = None;
         for path in abs_paths {
             if let Err(e) = self.afc.remove_all(path).await {
@@ -117,12 +128,15 @@ impl DocumentsSession {
                     return Ok(true);
                 }
                 let n = local_file.read(&mut buf).await?;
-                if n == 0 { return Ok(false); }
+                if n == 0 {
+                    return Ok(false);
+                }
                 ios_file.write_entire(&buf[..n]).await?;
                 written += n as u64;
                 on_progress(written, total);
             }
-        }.await;
+        }
+        .await;
         let close_result = ios_file.close().await;
         let cancelled = write_result?;
         close_result?;
@@ -151,7 +165,10 @@ impl DocumentsSession {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let path = format!("{current_dir}/{filename}");
-        let total = self.afc.get_file_info(&path).await
+        let total = self
+            .afc
+            .get_file_info(&path)
+            .await
             .map(|i| i.size as u64)
             .unwrap_or(0);
         let mut ios_file = self.afc.open(path, AfcFopenMode::RdOnly).await?;
@@ -167,12 +184,15 @@ impl DocumentsSession {
                     return Ok(true);
                 }
                 let n = ios_file.read(&mut buf).await?;
-                if n == 0 { return Ok(false); }
+                if n == 0 {
+                    return Ok(false);
+                }
                 local_file.write_all(&buf[..n]).await?;
                 read_bytes += n as u64;
                 on_progress(read_bytes, total.max(read_bytes));
             }
-        }.await;
+        }
+        .await;
         let close_result = ios_file.close().await;
         let cancelled = read_result?;
         close_result?;

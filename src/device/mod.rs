@@ -2,11 +2,11 @@
 // All idevice imports are confined to this module to limit
 // the blast radius of library upgrades.
 
-use std::collections::HashMap;
 use idevice::IdeviceService;
 use idevice::services::afc::AfcClient;
 use idevice::services::lockdown::LockdownClient;
 use idevice::usbmuxd::{UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
+use std::collections::HashMap;
 
 pub mod apps;
 pub mod house_arrest;
@@ -15,17 +15,17 @@ use house_arrest::DocumentsSession;
 
 pub struct DeviceInfo {
     #[allow(dead_code)]
-    pub udid:          String,
-    pub device_name:   String,          // user-assigned device name (e.g. "John's iPhone")
-    pub model_name:    String,          // marketing name (e.g. "iPhone 14")
-    pub storage_used:  Option<u64>,     // bytes used (None if unavailable)
-    pub storage_total: Option<u64>,     // total capacity in bytes
+    pub udid: String,
+    pub device_name: String, // user-assigned device name (e.g. "John's iPhone")
+    pub model_name: String,  // marketing name (e.g. "iPhone 14")
+    pub storage_used: Option<u64>, // bytes used (None if unavailable)
+    pub storage_total: Option<u64>, // total capacity in bytes
 }
 
 pub struct AppInfo {
     pub bundle_id: String,
     pub display_name: String,
-    pub icon_png: Option<Vec<u8>>,  // PNG bytes fetched from SpringBoard
+    pub icon_png: Option<Vec<u8>>, // PNG bytes fetched from SpringBoard
 }
 
 pub struct FileEntry {
@@ -47,7 +47,10 @@ pub struct DocumentsPool {
 
 impl Default for DocumentsPool {
     fn default() -> Self {
-        Self { key: None, idle: Vec::new() }
+        Self {
+            key: None,
+            idle: Vec::new(),
+        }
     }
 }
 
@@ -55,7 +58,10 @@ impl DocumentsPool {
     pub async fn prepare(&mut self, bundle_id: &str) -> Result<String, String> {
         let (devices, _) = connect_first_device().await?;
         let udid = devices[0].udid.clone();
-        let key = DocumentsPoolKey { udid: udid.clone(), bundle_id: bundle_id.to_owned() };
+        let key = DocumentsPoolKey {
+            udid: udid.clone(),
+            bundle_id: bundle_id.to_owned(),
+        };
         if self.key.as_ref() != Some(&key) {
             self.clear();
             log::info!("AFC pool scope: device={udid}, app={bundle_id}");
@@ -66,7 +72,12 @@ impl DocumentsPool {
 
     pub fn clear(&mut self) {
         if let Some(key) = self.key.take() {
-            log::info!("AFC pool discarded: device={}, app={}, idle={}", key.udid, key.bundle_id, self.idle.len());
+            log::info!(
+                "AFC pool discarded: device={}, app={}, idle={}",
+                key.udid,
+                key.bundle_id,
+                self.idle.len()
+            );
         }
         self.idle.clear();
     }
@@ -90,7 +101,10 @@ impl DocumentsPool {
     async fn take_session(&mut self, bundle_id: &str) -> Result<DocumentsSession, String> {
         self.prepare(bundle_id).await?;
         if let Some(session) = self.idle.pop() {
-            log::debug!("AFC pool lease: reused idle session (idle={})", self.idle.len());
+            log::debug!(
+                "AFC pool lease: reused idle session (idle={})",
+                self.idle.len()
+            );
             return Ok(session);
         }
         let session = self.open_session(bundle_id).await?;
@@ -109,29 +123,48 @@ impl DocumentsPool {
         path: &str,
     ) -> Result<(Vec<FileEntry>, HashMap<String, (u64, String)>), String> {
         let mut session = self.take_session(bundle_id).await?;
-        let result = session.list_dir_with_metadata(path).await
+        let result = session
+            .list_dir_with_metadata(path)
+            .await
             .map_err(|e| e.to_string())
             .map(|(entries, info)| {
-                let entries = entries.into_iter()
-                    .map(|e| FileEntry { name: e.name, is_dir: e.is_dir })
+                let entries = entries
+                    .into_iter()
+                    .map(|e| FileEntry {
+                        name: e.name,
+                        is_dir: e.is_dir,
+                    })
                     .collect();
                 (entries, info)
             });
-        if result.is_ok() { self.return_session(session); }
+        if result.is_ok() {
+            self.return_session(session);
+        }
         result
     }
 
     pub async fn make_dir(&mut self, bundle_id: &str, path: &str) -> Result<(), String> {
         let mut session = self.take_session(bundle_id).await?;
         let result = session.make_dir(path).await.map_err(|e| e.to_string());
-        if result.is_ok() { self.return_session(session); }
+        if result.is_ok() {
+            self.return_session(session);
+        }
         result
     }
 
-    pub async fn delete_items(&mut self, bundle_id: &str, abs_paths: &[String]) -> Result<(), String> {
+    pub async fn delete_items(
+        &mut self,
+        bundle_id: &str,
+        abs_paths: &[String],
+    ) -> Result<(), String> {
         let mut session = self.take_session(bundle_id).await?;
-        let result = session.delete_items(abs_paths).await.map_err(|e| e.to_string());
-        if result.is_ok() { self.return_session(session); }
+        let result = session
+            .delete_items(abs_paths)
+            .await
+            .map_err(|e| e.to_string());
+        if result.is_ok() {
+            self.return_session(session);
+        }
         result
     }
 
@@ -142,8 +175,13 @@ impl DocumentsPool {
         new_abs: &str,
     ) -> Result<(), String> {
         let mut session = self.take_session(bundle_id).await?;
-        let result = session.rename_file(old_abs, new_abs).await.map_err(|e| e.to_string());
-        if result.is_ok() { self.return_session(session); }
+        let result = session
+            .rename_file(old_abs, new_abs)
+            .await
+            .map_err(|e| e.to_string());
+        if result.is_ok() {
+            self.return_session(session);
+        }
         result
     }
 
@@ -153,8 +191,13 @@ impl DocumentsPool {
         ios_paths: &[String],
     ) -> Result<(Vec<house_arrest::DownloadTask>, u64), String> {
         let mut session = self.take_session(bundle_id).await?;
-        let result = session.scan_for_download(ios_paths).await.map_err(|e| e.to_string());
-        if result.is_ok() { self.return_session(session); }
+        let result = session
+            .scan_for_download(ios_paths)
+            .await
+            .map_err(|e| e.to_string());
+        if result.is_ok() {
+            self.return_session(session);
+        }
         result
     }
 
@@ -190,8 +233,13 @@ impl DocumentsPool {
         bundle_id: &str,
         sessions: Vec<DocumentsSession>,
     ) {
-        let expected = DocumentsPoolKey { udid: udid.to_owned(), bundle_id: bundle_id.to_owned() };
-        if self.key.as_ref() != Some(&expected) { return; }
+        let expected = DocumentsPoolKey {
+            udid: udid.to_owned(),
+            bundle_id: bundle_id.to_owned(),
+        };
+        if self.key.as_ref() != Some(&expected) {
+            return;
+        }
         self.idle.extend(sessions);
         log::info!("AFC pool transfer return: idle={}", self.idle.len());
     }
@@ -224,13 +272,23 @@ async fn fetch_device_info(
     };
 
     let str_val = |v: plist::Value| -> Option<String> {
-        if let plist::Value::String(s) = v { Some(s) } else { None }
+        if let plist::Value::String(s) = v {
+            Some(s)
+        } else {
+            None
+        }
     };
-    let device_name = lock.get_value(Some("DeviceName"), None).await.ok()
+    let device_name = lock
+        .get_value(Some("DeviceName"), None)
+        .await
+        .ok()
         .and_then(str_val)
         .unwrap_or_else(|| udid.to_string());
 
-    let model_name = lock.get_value(Some("ProductType"), None).await.ok()
+    let model_name = lock
+        .get_value(Some("ProductType"), None)
+        .await
+        .ok()
         .and_then(str_val)
         .map(|pt| product_type_to_name(&pt))
         .unwrap_or_default();
@@ -241,14 +299,20 @@ async fn fetch_device_info(
         Ok(mut afc) => match afc.get_device_info().await {
             Ok(info) => {
                 let total = info.total_bytes as u64;
-                let free  = info.free_bytes  as u64;
-                let used  = total.saturating_sub(free);
+                let free = info.free_bytes as u64;
+                let used = total.saturating_sub(free);
                 log::info!("storage via AFC: total={total} free={free} used={used}");
                 (Some(used), Some(total))
             }
-            Err(e) => { log::warn!("AFC get_device_info failed: {e}"); (None, None) }
+            Err(e) => {
+                log::warn!("AFC get_device_info failed: {e}");
+                (None, None)
+            }
         },
-        Err(e) => { log::warn!("AFC connect failed: {e}"); (None, None) }
+        Err(e) => {
+            log::warn!("AFC connect failed: {e}");
+            (None, None)
+        }
     };
 
     (device_name, model_name, storage_used, storage_total)
@@ -299,9 +363,9 @@ fn product_type_to_name(pt: &str) -> String {
         "iPhone10,1" | "iPhone10,4" => "iPhone 8",
         "iPhone10,2" | "iPhone10,5" => "iPhone 8 Plus",
         // iPhone SE (1st gen) / 7 series
-        "iPhone9,1"  | "iPhone9,3"  => "iPhone 7",
-        "iPhone9,2"  | "iPhone9,4"  => "iPhone 7 Plus",
-        "iPhone8,4"                  => "iPhone SE (1st gen)",
+        "iPhone9,1" | "iPhone9,3" => "iPhone 7",
+        "iPhone9,2" | "iPhone9,4" => "iPhone 7 Plus",
+        "iPhone8,4" => "iPhone SE (1st gen)",
         _ => return pt.to_string(),
     };
     name.to_string()
@@ -315,13 +379,20 @@ async fn fetch_app_icons(
 ) {
     use idevice::services::springboardservices::SpringBoardServicesClient;
     let mut sb = match SpringBoardServicesClient::connect(provider).await {
-        Ok(c)  => c,
-        Err(e) => { log::warn!("SpringBoard connect failed: {e}"); return; }
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("SpringBoard connect failed: {e}");
+            return;
+        }
     };
     for app in apps.iter_mut() {
         match sb.get_icon_pngdata(app.bundle_id.clone()).await {
-            Ok(png) => { app.icon_png = Some(png); }
-            Err(e)  => { log::warn!("get_icon_pngdata({}) failed: {e}", app.bundle_id); }
+            Ok(png) => {
+                app.icon_png = Some(png);
+            }
+            Err(e) => {
+                log::warn!("get_icon_pngdata({}) failed: {e}", app.bundle_id);
+            }
         }
     }
 }
@@ -331,7 +402,9 @@ async fn fetch_app_icons(
 /// Checks whether any device is connected (lightweight; no lockdownd).
 /// The caller must distinguish a confirmed empty list from a usbmuxd error.
 pub async fn is_any_device_connected() -> Result<bool, String> {
-    let mut mux = UsbmuxdConnection::default().await.map_err(|e| e.to_string())?;
+    let mut mux = UsbmuxdConnection::default()
+        .await
+        .map_err(|e| e.to_string())?;
     let devices: Vec<UsbmuxdDevice> = mux.get_devices().await.map_err(|e| e.to_string())?;
     Ok(!devices.is_empty())
 }
@@ -339,7 +412,9 @@ pub async fn is_any_device_connected() -> Result<bool, String> {
 /// Checks for this exact device. Errors are intentionally distinct from a
 /// confirmed absence so a usbmuxd hiccup is not treated as DeviceLost.
 pub async fn is_device_connected(udid: &str) -> Result<bool, String> {
-    let mut mux = UsbmuxdConnection::default().await.map_err(|e| e.to_string())?;
+    let mut mux = UsbmuxdConnection::default()
+        .await
+        .map_err(|e| e.to_string())?;
     let devices: Vec<UsbmuxdDevice> = mux.get_devices().await.map_err(|e| e.to_string())?;
     Ok(devices.iter().any(|device| device.udid == udid))
 }
@@ -347,11 +422,16 @@ pub async fn is_device_connected(udid: &str) -> Result<bool, String> {
 /// Scans for a connected device and returns its file-sharing app list.
 /// Returns Ok(None) if no device is connected.
 pub async fn scan_and_list() -> Result<Option<(DeviceInfo, Vec<AppInfo>)>, String> {
-    let mut mux = UsbmuxdConnection::default()
-        .await
-        .map_err(|e| { let s = e.to_string(); log::error!("usbmuxd connect failed: {s}"); s })?;
-    let devices: Vec<UsbmuxdDevice> = mux.get_devices().await
-        .map_err(|e| { let s = e.to_string(); log::error!("get_devices failed: {s}"); s })?;
+    let mut mux = UsbmuxdConnection::default().await.map_err(|e| {
+        let s = e.to_string();
+        log::error!("usbmuxd connect failed: {s}");
+        s
+    })?;
+    let devices: Vec<UsbmuxdDevice> = mux.get_devices().await.map_err(|e| {
+        let s = e.to_string();
+        log::error!("get_devices failed: {s}");
+        s
+    })?;
 
     if devices.is_empty() {
         return Ok(None);
@@ -371,9 +451,11 @@ pub async fn scan_and_list() -> Result<Option<(DeviceInfo, Vec<AppInfo>)>, Strin
         storage_total,
     };
 
-    let mut app_list = apps::list_apps_info(&provider)
-        .await
-        .map_err(|e| { let s = e.to_string(); log::error!("list_apps failed: {s}"); s })?;
+    let mut app_list = apps::list_apps_info(&provider).await.map_err(|e| {
+        let s = e.to_string();
+        log::error!("list_apps failed: {s}");
+        s
+    })?;
 
     // fetch icons from SpringBoard (failures do not prevent the app list from being returned)
     fetch_app_icons(&provider, &mut app_list).await;

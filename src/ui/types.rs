@@ -1,11 +1,11 @@
 // ui/types.rs — UI layer type definitions
+use crate::device::{AppInfo, DeviceInfo};
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
-    collections::HashMap,
     time::Instant,
 };
-use crate::device::{AppInfo, DeviceInfo};
 
 // ─── Public types (referenced from main.rs) ──────────────────────────────────
 
@@ -20,8 +20,14 @@ pub struct FileEntry {
 // ─── Commands (GUI → worker) ─────────────────────────────────────────────────
 
 pub enum DeviceCommand {
-    SelectApp { bundle_id: String, path: String },
-    NavigateTo { bundle_id: String, path: String },
+    SelectApp {
+        bundle_id: String,
+        path: String,
+    },
+    NavigateTo {
+        bundle_id: String,
+        path: String,
+    },
     UploadFiles {
         bundle_id: String,
         current_path: String,
@@ -29,8 +35,16 @@ pub enum DeviceCommand {
         cancel: Arc<AtomicBool>,
         concurrency: usize,
     },
-    DeleteFiles { bundle_id: String, current_path: String, abs_paths: Vec<String> },
-    MkDir { bundle_id: String, current_path: String, new_path: String },
+    DeleteFiles {
+        bundle_id: String,
+        current_path: String,
+        abs_paths: Vec<String>,
+    },
+    MkDir {
+        bundle_id: String,
+        current_path: String,
+        new_path: String,
+    },
     RenameFile {
         bundle_id: String,
         current_path: String,
@@ -38,10 +52,10 @@ pub enum DeviceCommand {
         new_abs: String,
     },
     ExportFiles {
-        bundle_id:  String,
-        ios_paths:  Vec<String>,   // absolute iOS paths of selected items
-        dest_dir:   PathBuf,
-        cancel:     Arc<AtomicBool>,
+        bundle_id: String,
+        ios_paths: Vec<String>, // absolute iOS paths of selected items
+        dest_dir: PathBuf,
+        cancel: Arc<AtomicBool>,
         concurrency: usize,
     },
 }
@@ -54,16 +68,36 @@ pub enum DeviceMessage {
     FileListLoading,
     FileList(Result<(Vec<FileEntry>, HashMap<String, FileMetadata>), String>),
     DeleteStarted,
-    UploadQueued { filename: String, bytes_total: u64 },
+    UploadQueued {
+        filename: String,
+        bytes_total: u64,
+    },
     UploadStarted(String),
-    UploadProgress { filename: String, bytes_done: u64, bytes_total: u64 },
+    UploadProgress {
+        filename: String,
+        bytes_done: u64,
+        bytes_total: u64,
+    },
     UploadDone(String),
-    UploadFailed { filename: String, error: String },
-    DownloadQueued { filename: String, bytes_total: u64 },
+    UploadFailed {
+        filename: String,
+        error: String,
+    },
+    DownloadQueued {
+        filename: String,
+        bytes_total: u64,
+    },
     DownloadStarted(String),
-    DownloadProgress { filename: String, bytes_done: u64, bytes_total: u64 },
+    DownloadProgress {
+        filename: String,
+        bytes_done: u64,
+        bytes_total: u64,
+    },
     DownloadDone(String),
-    DownloadFailed { filename: String, error: String },
+    DownloadFailed {
+        filename: String,
+        error: String,
+    },
     OperationError(String),
 }
 
@@ -72,10 +106,10 @@ pub enum DeviceMessage {
 pub(super) enum DeviceStatus {
     Unknown,
     Connected {
-        udid:          String,
-        device_name:   String,
-        model_name:    String,
-        storage_used:  Option<u64>,
+        udid: String,
+        device_name: String,
+        model_name: String,
+        storage_used: Option<u64>,
         storage_total: Option<u64>,
     },
     Disconnected,
@@ -90,9 +124,9 @@ pub(super) enum FileLoadState {
 }
 
 pub(super) struct TransferItem {
-    pub(super) filename:   String,
-    pub(super) is_upload:  bool,
-    pub(super) status:     TransferStatus,
+    pub(super) filename: String,
+    pub(super) is_upload: bool,
+    pub(super) status: TransferStatus,
     pub(super) bytes_done: u64,
     pub(super) bytes_total: u64,
     pub(super) started_at: Option<Instant>,
@@ -117,12 +151,12 @@ pub(super) enum SortColumn {
 /// to avoid &mut self conflicts inside egui closures.
 #[derive(Default)]
 pub(super) struct FilePanelActions {
-    pub(super) enter_folder:     Option<String>,
-    pub(super) delete:           bool,
-    pub(super) rename:           bool,
-    pub(super) new_folder:       bool,
-    pub(super) export:           bool,
-    pub(super) sort_click:       Option<SortColumn>,
+    pub(super) enter_folder: Option<String>,
+    pub(super) delete: bool,
+    pub(super) rename: bool,
+    pub(super) new_folder: bool,
+    pub(super) export: bool,
+    pub(super) sort_click: Option<SortColumn>,
     pub(super) right_click_name: Option<String>,
-    pub(super) sel_action:       Option<(usize, String, bool, bool)>,
+    pub(super) sel_action: Option<(usize, String, bool, bool)>,
 }

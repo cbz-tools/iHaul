@@ -1,11 +1,17 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
-fn default_concurrency() -> usize { 2 }
+fn default_concurrency() -> usize {
+    2
+}
 
 fn sanitize_concurrency(concurrency: usize) -> usize {
-    if (1..=8).contains(&concurrency) { concurrency } else { default_concurrency() }
+    if (1..=8).contains(&concurrency) {
+        concurrency
+    } else {
+        default_concurrency()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]

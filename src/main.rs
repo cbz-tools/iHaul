@@ -8,7 +8,7 @@ mod ui;
 
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::{mpsc, Arc, atomic::Ordering};
+use std::sync::{Arc, atomic::Ordering, mpsc};
 use tokio::sync::{Mutex, Semaphore};
 use ui::{DeviceCommand, DeviceMessage};
 
@@ -45,7 +45,8 @@ fn collect_upload_tasks(
 
     for path in paths {
         if path.is_dir() {
-            let folder_name = path.file_name()
+            let folder_name = path
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let ios_top = format!("{ios_base}/{folder_name}");
@@ -68,7 +69,9 @@ fn walk_dir_for_upload(
     file_tasks: &mut Vec<(std::path::PathBuf, String)>,
     ios_dirs: &mut Vec<String>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -87,8 +90,8 @@ fn load_icon() -> Option<eframe::egui::IconData> {
     let img = image::load_from_memory(bytes).ok()?.to_rgba8();
     let (w, h) = image::GenericImageView::dimensions(&img);
     Some(eframe::egui::IconData {
-        rgba:   img.into_raw(),
-        width:  w,
+        rgba: img.into_raw(),
+        width: w,
         height: h,
     })
 }
@@ -198,10 +201,18 @@ async fn refresh_file_list(
             false
         }
         Ok((entries, info)) => {
-            msg_tx.send(DeviceMessage::FileList(Ok((
-                entries.into_iter().map(|e| ui::FileEntry { name: e.name, is_dir: e.is_dir }).collect(),
-                info,
-            )))).ok();
+            msg_tx
+                .send(DeviceMessage::FileList(Ok((
+                    entries
+                        .into_iter()
+                        .map(|e| ui::FileEntry {
+                            name: e.name,
+                            is_dir: e.is_dir,
+                        })
+                        .collect(),
+                    info,
+                ))))
+                .ok();
             false
         }
     }
@@ -247,9 +258,15 @@ async fn background_loop(
                         // full scan: lockdownd + app list
                         match device::scan_and_list().await {
                             Ok(Some((info, apps))) => {
-                                log::info!("auto-scan: device={}, apps={}", info.device_name, apps.len());
+                                log::info!(
+                                    "auto-scan: device={}, apps={}",
+                                    info.device_name,
+                                    apps.len()
+                                );
                                 device_connected = true;
-                                msg_tx.send(DeviceMessage::ScanResult(Ok(Some((info, apps))))).ok();
+                                msg_tx
+                                    .send(DeviceMessage::ScanResult(Ok(Some((info, apps)))))
+                                    .ok();
                             }
                             Ok(None) => {} // no device found, wait for next poll
                             Err(e) => log::warn!("auto-scan error: {e}"),
@@ -276,18 +293,34 @@ async fn background_loop(
                 }
             }
 
-            Ok(DeviceCommand::UploadFiles { bundle_id, current_path, paths, cancel, concurrency }) => {
+            Ok(DeviceCommand::UploadFiles {
+                bundle_id,
+                current_path,
+                paths,
+                cancel,
+                concurrency,
+            }) => {
                 let (file_tasks, ios_dirs) = collect_upload_tasks(&paths, &current_path);
                 log::info!(
                     "upload started: files={}, dirs={}, concurrency={concurrency}",
-                    file_tasks.len(), ios_dirs.len()
+                    file_tasks.len(),
+                    ios_dirs.len()
                 );
 
                 // Queue all files immediately so the UI shows them before mk_dir runs.
                 for (path, _) in &file_tasks {
-                    let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
                     let bytes_total = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                    msg_tx.send(DeviceMessage::UploadQueued { filename, bytes_total }).ok();
+                    msg_tx
+                        .send(DeviceMessage::UploadQueued {
+                            filename,
+                            bytes_total,
+                        })
+                        .ok();
                 }
 
                 // Directory creation is a regular pooled operation. It uses one lease
@@ -295,7 +328,10 @@ async fn background_loop(
                 for ios_dir in &ios_dirs {
                     let udid = match documents_pool.prepare(&bundle_id).await {
                         Ok(udid) => udid,
-                        Err(e) => { log::warn!("mkdir {ios_dir}: {e}"); continue; }
+                        Err(e) => {
+                            log::warn!("mkdir {ios_dir}: {e}");
+                            continue;
+                        }
                     };
                     match guard_device(&udid, documents_pool.make_dir(&bundle_id, ios_dir)).await {
                         Ok(()) => {}
@@ -316,8 +352,17 @@ async fn background_loop(
                     Err(e) => {
                         log::error!("upload AFC lease failed: {e}");
                         for (path, _) in file_tasks {
-                            let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                            msg_tx.send(DeviceMessage::UploadFailed { filename, error: e.clone() }).ok();
+                            let filename = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            msg_tx
+                                .send(DeviceMessage::UploadFailed {
+                                    filename,
+                                    error: e.clone(),
+                                })
+                                .ok();
                         }
                         continue 'worker;
                     }
@@ -336,39 +381,58 @@ async fn background_loop(
                         async move {
                             let _permit = sem.acquire_owned().await.unwrap();
                             loop {
-                                let Some((path, ios_dest_dir)) = tasks.lock().await.pop_front() else {
+                                let Some((path, ios_dest_dir)) = tasks.lock().await.pop_front()
+                                else {
                                     return Some(session);
                                 };
-                                let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                                let filename = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned();
                                 if cancel.load(Ordering::Relaxed) {
                                     tx.send(DeviceMessage::UploadFailed {
                                         filename,
                                         error: "cancelled".to_string(),
-                                    }).ok();
+                                    })
+                                    .ok();
                                     continue;
                                 }
 
                                 tx.send(DeviceMessage::UploadStarted(filename.clone())).ok();
                                 let tx_prog = tx.clone();
                                 let fname_prog = filename.clone();
-                                let result = session.upload_file_with_progress(
-                                    &path, &ios_dest_dir, &filename, &cancel, move |done, total| {
-                                        tx_prog.send(DeviceMessage::UploadProgress {
-                                            filename: fname_prog.clone(), bytes_done: done, bytes_total: total,
-                                        }).ok();
-                                    },
-                                ).await.map_err(|e| e.to_string());
+                                let result = session
+                                    .upload_file_with_progress(
+                                        &path,
+                                        &ios_dest_dir,
+                                        &filename,
+                                        &cancel,
+                                        move |done, total| {
+                                            tx_prog
+                                                .send(DeviceMessage::UploadProgress {
+                                                    filename: fname_prog.clone(),
+                                                    bytes_done: done,
+                                                    bytes_total: total,
+                                                })
+                                                .ok();
+                                        },
+                                    )
+                                    .await
+                                    .map_err(|e| e.to_string());
                                 match result {
                                     Ok(()) => {
                                         log::info!("upload done: {filename}");
                                         tx.send(DeviceMessage::UploadDone(filename)).ok();
                                     }
                                     Err(e) if e == "cancelled" => {
-                                        tx.send(DeviceMessage::UploadFailed { filename, error: e }).ok();
+                                        tx.send(DeviceMessage::UploadFailed { filename, error: e })
+                                            .ok();
                                     }
                                     Err(e) => {
                                         log::error!("upload failed: file={filename}, error={e}");
-                                        tx.send(DeviceMessage::UploadFailed { filename, error: e }).ok();
+                                        tx.send(DeviceMessage::UploadFailed { filename, error: e })
+                                            .ok();
                                         return None;
                                     }
                                 }
@@ -377,7 +441,8 @@ async fn background_loop(
                     })
                     .collect();
 
-                let joined = async { Ok::<_, String>(futures::future::join_all(upload_futures).await) };
+                let joined =
+                    async { Ok::<_, String>(futures::future::join_all(upload_futures).await) };
                 match guard_device(&udid, joined).await {
                     Err(GuardError::DeviceLost) => {
                         device_connected = false;
@@ -394,24 +459,39 @@ async fn background_loop(
                             continue 'worker;
                         }
                         let healthy_sessions: Vec<_> = results.into_iter().flatten().collect();
-                        documents_pool.return_transfer_sessions(&udid, &bundle_id, healthy_sessions);
+                        documents_pool.return_transfer_sessions(
+                            &udid,
+                            &bundle_id,
+                            healthy_sessions,
+                        );
                         let remaining = std::mem::take(&mut *tasks.lock().await);
                         for (path, _) in remaining {
-                            let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                            msg_tx.send(DeviceMessage::UploadFailed {
-                                filename,
-                                error: "AFC session unavailable".to_string(),
-                            }).ok();
+                            let filename = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            msg_tx
+                                .send(DeviceMessage::UploadFailed {
+                                    filename,
+                                    error: "AFC session unavailable".to_string(),
+                                })
+                                .ok();
                         }
                     }
                 }
-                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await {
+                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await
+                {
                     device_connected = false;
                     notify_device_lost(&mut documents_pool, &msg_tx);
                 }
             }
 
-            Ok(DeviceCommand::DeleteFiles { bundle_id, current_path, abs_paths }) => {
+            Ok(DeviceCommand::DeleteFiles {
+                bundle_id,
+                current_path,
+                abs_paths,
+            }) => {
                 log::info!("delete started: files={}", abs_paths.len());
                 for p in &abs_paths {
                     log::info!("delete: {p}");
@@ -424,7 +504,8 @@ async fn background_loop(
                         continue 'worker;
                     }
                 };
-                match guard_device(&udid, documents_pool.delete_items(&bundle_id, &abs_paths)).await {
+                match guard_device(&udid, documents_pool.delete_items(&bundle_id, &abs_paths)).await
+                {
                     Ok(()) => log::info!("delete completed"),
                     Err(GuardError::Operation(e)) => {
                         log::error!("delete failed: {e}");
@@ -436,13 +517,18 @@ async fn background_loop(
                         continue 'worker;
                     }
                 }
-                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await {
+                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await
+                {
                     device_connected = false;
                     notify_device_lost(&mut documents_pool, &msg_tx);
                 }
             }
 
-            Ok(DeviceCommand::MkDir { bundle_id, current_path, new_path }) => {
+            Ok(DeviceCommand::MkDir {
+                bundle_id,
+                current_path,
+                new_path,
+            }) => {
                 log::info!("mkdir: {new_path}");
                 let udid = match documents_pool.prepare(&bundle_id).await {
                     Ok(udid) => udid,
@@ -463,13 +549,19 @@ async fn background_loop(
                         continue 'worker;
                     }
                 }
-                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await {
+                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await
+                {
                     device_connected = false;
                     notify_device_lost(&mut documents_pool, &msg_tx);
                 }
             }
 
-            Ok(DeviceCommand::RenameFile { bundle_id, current_path, old_abs, new_abs }) => {
+            Ok(DeviceCommand::RenameFile {
+                bundle_id,
+                current_path,
+                old_abs,
+                new_abs,
+            }) => {
                 log::info!("rename: {old_abs} -> {new_abs}");
                 let udid = match documents_pool.prepare(&bundle_id).await {
                     Ok(udid) => udid,
@@ -478,7 +570,12 @@ async fn background_loop(
                         continue 'worker;
                     }
                 };
-                match guard_device(&udid, documents_pool.rename_file(&bundle_id, &old_abs, &new_abs)).await {
+                match guard_device(
+                    &udid,
+                    documents_pool.rename_file(&bundle_id, &old_abs, &new_abs),
+                )
+                .await
+                {
                     Ok(()) => {}
                     Err(GuardError::Operation(e)) => {
                         log::error!("rename failed: {e}");
@@ -490,13 +587,20 @@ async fn background_loop(
                         continue 'worker;
                     }
                 }
-                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await {
+                if refresh_file_list(&mut documents_pool, &bundle_id, &current_path, &msg_tx).await
+                {
                     device_connected = false;
                     notify_device_lost(&mut documents_pool, &msg_tx);
                 }
             }
 
-            Ok(DeviceCommand::ExportFiles { bundle_id, ios_paths, dest_dir, cancel, concurrency }) => {
+            Ok(DeviceCommand::ExportFiles {
+                bundle_id,
+                ios_paths,
+                dest_dir,
+                cancel,
+                concurrency,
+            }) => {
                 log::info!("export: scanning {} selected items", ios_paths.len());
 
                 // Phase 1: recursive scan uses one ordinary Documents pool lease.
@@ -507,29 +611,34 @@ async fn background_loop(
                         continue 'worker;
                     }
                 };
-                let (tasks, _total) = match guard_device(&udid, documents_pool.scan_export(&bundle_id, &ios_paths)).await {
-                    Ok(result) => result,
-                    Err(GuardError::Operation(e)) => {
-                        log::error!("export scan failed: {e}");
-                        msg_tx.send(DeviceMessage::OperationError(e)).ok();
-                        continue 'worker;
-                    }
-                    Err(GuardError::DeviceLost) => {
-                        device_connected = false;
-                        notify_device_lost(&mut documents_pool, &msg_tx);
-                        continue 'worker;
-                    }
-                };
+                let (tasks, _total) =
+                    match guard_device(&udid, documents_pool.scan_export(&bundle_id, &ios_paths))
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(GuardError::Operation(e)) => {
+                            log::error!("export scan failed: {e}");
+                            msg_tx.send(DeviceMessage::OperationError(e)).ok();
+                            continue 'worker;
+                        }
+                        Err(GuardError::DeviceLost) => {
+                            device_connected = false;
+                            notify_device_lost(&mut documents_pool, &msg_tx);
+                            continue 'worker;
+                        }
+                    };
 
                 log::info!("export: {} files to download", tasks.len());
 
                 // Queue all tasks before starting any download
                 for task in &tasks {
                     let display = task.local_rel.to_string_lossy().replace('\\', "/");
-                    msg_tx.send(DeviceMessage::DownloadQueued {
-                        filename:    display,
-                        bytes_total: task.size,
-                    }).ok();
+                    msg_tx
+                        .send(DeviceMessage::DownloadQueued {
+                            filename: display,
+                            bytes_total: task.size,
+                        })
+                        .ok();
                 }
 
                 let (transfer_udid, sessions) = match documents_pool
@@ -541,7 +650,12 @@ async fn background_loop(
                         log::error!("export AFC lease failed: {e}");
                         for task in tasks {
                             let filename = task.local_rel.to_string_lossy().replace('\\', "/");
-                            msg_tx.send(DeviceMessage::DownloadFailed { filename, error: e.clone() }).ok();
+                            msg_tx
+                                .send(DeviceMessage::DownloadFailed {
+                                    filename,
+                                    error: e.clone(),
+                                })
+                                .ok();
                         }
                         continue 'worker;
                     }
@@ -550,71 +664,98 @@ async fn background_loop(
                 // Phase 2: each lane owns one exclusive Documents AFC session.
                 let tasks = Arc::new(Mutex::new(VecDeque::from(tasks)));
                 let semaphore = Arc::new(Semaphore::new(sessions.len()));
-                let download_futures: Vec<_> = sessions.into_iter().map(|mut session| {
-                    let sem = semaphore.clone();
-                    let tasks = tasks.clone();
-                    let tx = msg_tx.clone();
-                    let cancel = cancel.clone();
-                    let dest_dir = dest_dir.clone();
+                let download_futures: Vec<_> = sessions
+                    .into_iter()
+                    .map(|mut session| {
+                        let sem = semaphore.clone();
+                        let tasks = tasks.clone();
+                        let tx = msg_tx.clone();
+                        let cancel = cancel.clone();
+                        let dest_dir = dest_dir.clone();
 
-                    async move {
-                        let _permit = sem.acquire_owned().await.unwrap();
-                        loop {
-                            let Some(task) = tasks.lock().await.pop_front() else {
-                                return Some(session);
-                            };
-                            let display = task.local_rel.to_string_lossy().replace('\\', "/");
-                            if cancel.load(Ordering::Relaxed) {
-                                tx.send(DeviceMessage::DownloadFailed {
-                                    filename: display,
-                                    error: "cancelled".to_string(),
-                                }).ok();
-                                continue;
-                            }
-
-                            let local_dest = dest_dir.join(&task.local_rel);
-                            if let Some(parent) = local_dest.parent()
-                                && let Err(e) = tokio::fs::create_dir_all(parent).await
-                            {
-                                tx.send(DeviceMessage::DownloadFailed {
-                                    filename: display,
-                                    error: e.to_string(),
-                                }).ok();
-                                continue;
-                            }
-
-                            tx.send(DeviceMessage::DownloadStarted(display.clone())).ok();
-                            let (ios_dir, ios_filename) = task.ios_abs
-                                .rsplit_once('/')
-                                .unwrap_or(("", task.ios_abs.as_str()));
-                            let tx_prog = tx.clone();
-                            let disp_prog = display.clone();
-                            let result = session.download_file_with_progress(
-                                ios_dir, ios_filename, &local_dest, &cancel, move |done, total| {
-                                    tx_prog.send(DeviceMessage::DownloadProgress {
-                                        filename: disp_prog.clone(), bytes_done: done, bytes_total: total,
-                                    }).ok();
-                                },
-                            ).await.map_err(|e| e.to_string());
-                            match result {
-                                Ok(()) => {
-                                    log::info!("export done: {display}");
-                                    tx.send(DeviceMessage::DownloadDone(display)).ok();
+                        async move {
+                            let _permit = sem.acquire_owned().await.unwrap();
+                            loop {
+                                let Some(task) = tasks.lock().await.pop_front() else {
+                                    return Some(session);
+                                };
+                                let display = task.local_rel.to_string_lossy().replace('\\', "/");
+                                if cancel.load(Ordering::Relaxed) {
+                                    tx.send(DeviceMessage::DownloadFailed {
+                                        filename: display,
+                                        error: "cancelled".to_string(),
+                                    })
+                                    .ok();
+                                    continue;
                                 }
-                                Err(e) if e == "cancelled" => {
-                                    tx.send(DeviceMessage::DownloadFailed { filename: display, error: e }).ok();
+
+                                let local_dest = dest_dir.join(&task.local_rel);
+                                if let Some(parent) = local_dest.parent()
+                                    && let Err(e) = tokio::fs::create_dir_all(parent).await
+                                {
+                                    tx.send(DeviceMessage::DownloadFailed {
+                                        filename: display,
+                                        error: e.to_string(),
+                                    })
+                                    .ok();
+                                    continue;
                                 }
-                                Err(e) => {
-                                    log::error!("export failed: file={display}, error={e}");
-                                    tx.send(DeviceMessage::DownloadFailed { filename: display, error: e }).ok();
-                                    return None;
+
+                                tx.send(DeviceMessage::DownloadStarted(display.clone()))
+                                    .ok();
+                                let (ios_dir, ios_filename) = task
+                                    .ios_abs
+                                    .rsplit_once('/')
+                                    .unwrap_or(("", task.ios_abs.as_str()));
+                                let tx_prog = tx.clone();
+                                let disp_prog = display.clone();
+                                let result = session
+                                    .download_file_with_progress(
+                                        ios_dir,
+                                        ios_filename,
+                                        &local_dest,
+                                        &cancel,
+                                        move |done, total| {
+                                            tx_prog
+                                                .send(DeviceMessage::DownloadProgress {
+                                                    filename: disp_prog.clone(),
+                                                    bytes_done: done,
+                                                    bytes_total: total,
+                                                })
+                                                .ok();
+                                        },
+                                    )
+                                    .await
+                                    .map_err(|e| e.to_string());
+                                match result {
+                                    Ok(()) => {
+                                        log::info!("export done: {display}");
+                                        tx.send(DeviceMessage::DownloadDone(display)).ok();
+                                    }
+                                    Err(e) if e == "cancelled" => {
+                                        tx.send(DeviceMessage::DownloadFailed {
+                                            filename: display,
+                                            error: e,
+                                        })
+                                        .ok();
+                                    }
+                                    Err(e) => {
+                                        log::error!("export failed: file={display}, error={e}");
+                                        tx.send(DeviceMessage::DownloadFailed {
+                                            filename: display,
+                                            error: e,
+                                        })
+                                        .ok();
+                                        return None;
+                                    }
                                 }
                             }
                         }
-                    }
-                }).collect();
+                    })
+                    .collect();
 
-                let joined = async { Ok::<_, String>(futures::future::join_all(download_futures).await) };
+                let joined =
+                    async { Ok::<_, String>(futures::future::join_all(download_futures).await) };
                 match guard_device(&transfer_udid, joined).await {
                     Err(GuardError::DeviceLost) => {
                         device_connected = false;
@@ -624,21 +765,30 @@ async fn background_loop(
                     Err(GuardError::Operation(e)) => log::error!("export worker failed: {e}"),
                     Ok(results) => {
                         if results.iter().any(Option::is_none)
-                            && matches!(device::is_device_connected(&transfer_udid).await, Ok(false))
+                            && matches!(
+                                device::is_device_connected(&transfer_udid).await,
+                                Ok(false)
+                            )
                         {
                             device_connected = false;
                             notify_device_lost(&mut documents_pool, &msg_tx);
                             continue 'worker;
                         }
                         let healthy_sessions: Vec<_> = results.into_iter().flatten().collect();
-                        documents_pool.return_transfer_sessions(&transfer_udid, &bundle_id, healthy_sessions);
+                        documents_pool.return_transfer_sessions(
+                            &transfer_udid,
+                            &bundle_id,
+                            healthy_sessions,
+                        );
                         let remaining = std::mem::take(&mut *tasks.lock().await);
                         for task in remaining {
                             let filename = task.local_rel.to_string_lossy().replace('\\', "/");
-                            msg_tx.send(DeviceMessage::DownloadFailed {
-                                filename,
-                                error: "AFC session unavailable".to_string(),
-                            }).ok();
+                            msg_tx
+                                .send(DeviceMessage::DownloadFailed {
+                                    filename,
+                                    error: "AFC session unavailable".to_string(),
+                                })
+                                .ok();
                         }
                     }
                 }
