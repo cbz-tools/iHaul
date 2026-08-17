@@ -1881,6 +1881,9 @@ impl App {
                 self.selected_files.insert(name.clone());
                 self.anchor_file = Some(name);
             }
+        } else if self.selected_files.len() == 1 && self.selected_files.contains(&name) {
+            self.selected_files.clear();
+            self.anchor_file = None;
         } else {
             self.selected_files.clear();
             self.selected_files.insert(name.clone());

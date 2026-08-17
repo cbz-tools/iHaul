@@ -12,3 +12,4 @@
 
 - Reduced idle CPU and GPU usage.
 - Spinner animation runs at a lower rate.
+- Clicking the only selected file again deselects it.

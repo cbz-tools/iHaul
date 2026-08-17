@@ -21,8 +21,6 @@ A lightweight iFunBox alternative for Windows, written in Rust.
 
 Download the latest release from [Releases](https://github.com/cbz-tools/iHaul/releases).
 
-See [CHANGELOG.md](CHANGELOG.md) for recent changes.
-
 | File | Contents |
 |---|---|
 | `iHaul.exe` | Windows GUI (x64) |
@@ -98,8 +96,20 @@ The binary will be at `target\release\iHaul.exe`.
 - [tokio](https://tokio.rs) — Async runtime
 - [rfd](https://github.com/PolyMeilex/rfd) — Native file dialogs
 
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Third-Party Licenses
+
+See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-This software uses third-party libraries. See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for details.
