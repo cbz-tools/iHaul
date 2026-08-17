@@ -36,6 +36,26 @@ use std::{
 const SPINNER_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(4);
 
+struct CommandBarContext<'a> {
+    can_act: bool,
+    can_export: bool,
+    has_sel: bool,
+    sel_has_dir: bool,
+    bundle_id: &'a str,
+    strings: &'a crate::i18n::S,
+}
+
+struct FileTableContext<'a, 'file> {
+    ctx: &'a egui::Context,
+    display_files: &'a [&'file FileEntry],
+    file_list_h: f32,
+    can_act: bool,
+    has_sel: bool,
+    sel_has_dir: bool,
+    filter_lower: &'a str,
+    strings: &'a crate::i18n::S,
+}
+
 // ─── App struct ───────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -1222,16 +1242,15 @@ impl App {
     }
 
     /// Command bar (Upload/Export/NewFolder/Paste | Rename/Delete | Cancel).
-    fn show_command_bar(
-        &mut self,
-        ui: &mut egui::Ui,
-        can_act: bool,
-        can_export: bool,
-        has_sel: bool,
-        sel_has_dir: bool,
-        bundle_id: &str,
-        s: &crate::i18n::S,
-    ) {
+    fn show_command_bar(&mut self, ui: &mut egui::Ui, context: CommandBarContext<'_>) {
+        let CommandBarContext {
+            can_act,
+            can_export,
+            has_sel,
+            sel_has_dir,
+            bundle_id,
+            strings: s,
+        } = context;
         ui.horizontal(|ui| {
             ui.add_enabled_ui(can_act, |ui| {
                 if cmd_btn(ui, ICON_UPLOAD, s.lbl_upload)
@@ -1436,15 +1455,18 @@ impl App {
     fn build_file_table(
         &self,
         ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        display_files: &[&FileEntry],
-        file_list_h: f32,
-        can_act: bool,
-        has_sel: bool,
-        sel_has_dir: bool,
-        filter_lower: &str,
-        s: &crate::i18n::S,
+        context: FileTableContext<'_, '_>,
     ) -> FilePanelActions {
+        let FileTableContext {
+            ctx,
+            display_files,
+            file_list_h,
+            can_act,
+            has_sel,
+            sel_has_dir,
+            filter_lower,
+            strings: s,
+        } = context;
         if let FileLoadState::Error(e) = &self.file_load_state {
             ui.colored_label(
                 egui::Color32::RED,
@@ -1894,7 +1916,17 @@ impl App {
         ui.add_space(4.0);
 
         // ── Row 2: command bar (actions) ──────────────────────────────────
-        self.show_command_bar(ui, can_act, can_export, has_sel, sel_has_dir, &bundle_id, s);
+        self.show_command_bar(
+            ui,
+            CommandBarContext {
+                can_act,
+                can_export,
+                has_sel,
+                sel_has_dir,
+                bundle_id: &bundle_id,
+                strings: s,
+            },
+        );
 
         // ── Status row: current operation (left) / count (right) ──────────
         self.show_status_bar(ui, s);
@@ -2012,14 +2044,16 @@ impl App {
         // ── Header + file list ───────────────────────────────────────────
         let actions = self.build_file_table(
             ui,
-            ctx,
-            &display_files,
-            file_list_h,
-            can_act,
-            has_sel,
-            sel_has_dir,
-            &filter_lower,
-            s,
+            FileTableContext {
+                ctx,
+                display_files: &display_files,
+                file_list_h,
+                can_act,
+                has_sel,
+                sel_has_dir,
+                filter_lower: &filter_lower,
+                strings: s,
+            },
         );
 
         // ── Apply deferred actions ────────────────────────────────────────
