@@ -96,19 +96,27 @@ fn load_icon() -> Option<eframe::egui::IconData> {
     })
 }
 
+#[derive(Clone)]
+struct RepaintSender {
+    tx: mpsc::Sender<DeviceMessage>,
+    ctx: eframe::egui::Context,
+}
+
+impl RepaintSender {
+    fn send(&self, msg: DeviceMessage) -> Result<(), ()> {
+        let result = self.tx.send(msg);
+        if result.is_ok() {
+            self.ctx.request_repaint();
+        }
+        result.map_err(|_| ())
+    }
+}
+
 fn main() -> eframe::Result {
     init_log();
     log::info!("iHaul {} started", env!("CARGO_PKG_VERSION"));
     let (cmd_tx, cmd_rx) = mpsc::channel::<DeviceCommand>();
     let (msg_tx, msg_rx) = mpsc::channel::<DeviceMessage>();
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
-        rt.block_on(background_loop(cmd_rx, msg_tx));
-    });
 
     let saved = settings::Settings::load();
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -132,7 +140,20 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "iHaul",
         options,
-        Box::new(|cc| Ok(Box::new(ui::App::new(cc, cmd_tx, msg_rx, saved)))),
+        Box::new(move |cc| {
+            let msg_tx = RepaintSender {
+                tx: msg_tx,
+                ctx: cc.egui_ctx.clone(),
+            };
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime");
+                rt.block_on(background_loop(cmd_rx, msg_tx));
+            });
+            Ok(Box::new(ui::App::new(cc, cmd_tx, msg_rx, saved)))
+        }),
     )
 }
 
@@ -173,7 +194,7 @@ where
     }
 }
 
-fn notify_device_lost(pool: &mut device::DocumentsPool, msg_tx: &mpsc::Sender<DeviceMessage>) {
+fn notify_device_lost(pool: &mut device::DocumentsPool, msg_tx: &RepaintSender) {
     log::info!("device disconnected during AFC operation");
     pool.clear();
     msg_tx.send(DeviceMessage::DeviceDisconnected).ok();
@@ -184,7 +205,7 @@ async fn refresh_file_list(
     pool: &mut device::DocumentsPool,
     bundle_id: &str,
     current_path: &str,
-    msg_tx: &mpsc::Sender<DeviceMessage>,
+    msg_tx: &RepaintSender,
 ) -> bool {
     msg_tx.send(DeviceMessage::FileListLoading).ok();
     let udid = match pool.prepare(bundle_id).await {
@@ -218,10 +239,7 @@ async fn refresh_file_list(
     }
 }
 
-async fn background_loop(
-    cmd_rx: mpsc::Receiver<DeviceCommand>,
-    msg_tx: mpsc::Sender<DeviceMessage>,
-) {
+async fn background_loop(cmd_rx: mpsc::Receiver<DeviceCommand>, msg_tx: RepaintSender) {
     // polling state for auto-connect and disconnect detection
     let mut device_connected = false;
     let mut last_check: Option<std::time::Instant> = None; // None = not yet checked → scan immediately
@@ -238,7 +256,7 @@ async fn background_loop(
                 } else {
                     std::time::Duration::from_secs(2)
                 };
-                let should_poll = last_check.map_or(true, |t| t.elapsed() >= interval);
+                let should_poll = last_check.is_none_or(|t| t.elapsed() >= interval);
 
                 if should_poll {
                     last_check = Some(std::time::Instant::now());

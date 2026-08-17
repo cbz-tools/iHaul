@@ -40,18 +40,10 @@ struct DocumentsPoolKey {
 
 /// Idle Documents AFC sessions for one device/app container.
 /// The background worker is the sole owner; every session is lent exclusively.
+#[derive(Default)]
 pub struct DocumentsPool {
     key: Option<DocumentsPoolKey>,
     idle: Vec<DocumentsSession>,
-}
-
-impl Default for DocumentsPool {
-    fn default() -> Self {
-        Self {
-            key: None,
-            idle: Vec::new(),
-        }
-    }
 }
 
 impl DocumentsPool {
@@ -373,10 +365,7 @@ fn product_type_to_name(pt: &str) -> String {
 
 /// Fetches app icons from SpringBoard in bulk and stores them in AppInfo.icon_png.
 /// Connection failures and per-icon failures are logged and silently skipped.
-async fn fetch_app_icons(
-    provider: &impl idevice::provider::IdeviceProvider,
-    apps: &mut Vec<AppInfo>,
-) {
+async fn fetch_app_icons(provider: &impl idevice::provider::IdeviceProvider, apps: &mut [AppInfo]) {
     use idevice::services::springboardservices::SpringBoardServicesClient;
     let mut sb = match SpringBoardServicesClient::connect(provider).await {
         Ok(c) => c,

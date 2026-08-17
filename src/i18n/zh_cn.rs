@@ -75,5 +75,6 @@ pub static S: super::S = super::S {
     settings_title: "设置",
     settings_language: "语言",
     settings_threads: "线程数",
+    settings_open_top_favorite: "启动时打开收藏夹首项",
     settings_reset_defaults: "恢复默认值",
 };

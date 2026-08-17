@@ -75,5 +75,6 @@ pub static S: super::S = super::S {
     settings_title: "Settings",
     settings_language: "Language",
     settings_threads: "Threads",
+    settings_open_top_favorite: "Open top favorite on startup",
     settings_reset_defaults: "Reset to Defaults",
 };

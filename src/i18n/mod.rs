@@ -115,6 +115,7 @@ pub struct S {
     pub settings_title: &'static str,
     pub settings_language: &'static str,
     pub settings_threads: &'static str,
+    pub settings_open_top_favorite: &'static str,
     pub settings_reset_defaults: &'static str,
 }
 

@@ -30,8 +30,11 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+const SPINNER_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
+const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(4);
 
 // ─── App struct ───────────────────────────────────────────────────────────────
 
@@ -70,7 +73,8 @@ pub struct App {
     is_creating_folder: bool,
     // Settings dialog
     show_settings: bool,
-    settings_snapshot: Option<(crate::i18n::Lang, usize)>, // snapshot for Cancel to restore
+    settings_snapshot: Option<(crate::i18n::Lang, usize, bool)>, // snapshot for Cancel to restore
+    auto_open_attempted: bool, // reset for each device connection/session
     // Transfer tracking
     transfers: Vec<TransferItem>,
     transfer_cancel: Option<Arc<AtomicBool>>,
@@ -130,6 +134,7 @@ impl App {
             is_creating_folder: false,
             show_settings: false,
             settings_snapshot: None,
+            auto_open_attempted: false,
             transfers: Vec::new(),
             transfer_cancel: None,
             speed_checkpoints: VecDeque::new(),
@@ -149,6 +154,7 @@ impl App {
         while let Ok(msg) = self.msg_rx.try_recv() {
             match msg {
                 DeviceMessage::ScanResult(Ok(Some((info, apps)))) => {
+                    let device_udid = info.udid.clone();
                     self.device_status = DeviceStatus::Connected {
                         udid: info.udid,
                         device_name: info.device_name,
@@ -159,12 +165,32 @@ impl App {
                     self.app_icons.clear(); // discard stale textures on reconnect
                     self.apps = apps;
                     self.reset_file_state();
+                    if !self.auto_open_attempted {
+                        self.auto_open_attempted = true;
+                        if self.settings.open_top_favorite_on_startup {
+                            let top_favorite = self
+                                .settings
+                                .favorites_by_device
+                                .get(&device_udid)
+                                .and_then(|favorites| favorites.first())
+                                .cloned();
+                            if let Some(top_favorite) = top_favorite
+                                && let Some(idx) = self
+                                    .apps
+                                    .iter()
+                                    .position(|app| app.bundle_id == top_favorite)
+                            {
+                                self.select_app(idx);
+                            }
+                        }
+                    }
                 }
                 DeviceMessage::ScanResult(Ok(None)) => {
                     self.device_status = DeviceStatus::Disconnected;
                     self.apps.clear();
                     self.app_icons.clear();
                     self.selected_app_idx = None;
+                    self.auto_open_attempted = false;
                     self.reset_file_state();
                 }
                 DeviceMessage::ScanResult(Err(e)) => {
@@ -175,6 +201,7 @@ impl App {
                     self.apps.clear();
                     self.app_icons.clear();
                     self.selected_app_idx = None;
+                    self.auto_open_attempted = false;
                     self.reset_file_state();
                     let msg = crate::i18n::strings(self.settings.lang)
                         .disconnected_msg
@@ -378,6 +405,22 @@ impl App {
             .and_then(|i| self.apps.get(i).map(|a| a.bundle_id.clone()))
     }
 
+    fn select_app(&mut self, idx: usize) {
+        let Some(app) = self.apps.get(idx) else {
+            return;
+        };
+        let bundle_id = app.bundle_id.clone();
+        self.selected_app_idx = Some(idx);
+        self.reset_file_state();
+        self.file_load_state = FileLoadState::Loading;
+        self.cmd_tx
+            .send(DeviceCommand::SelectApp {
+                bundle_id,
+                path: "/Documents".to_string(),
+            })
+            .ok();
+    }
+
     fn clear_transfers(&mut self) {
         self.transfers.clear();
         self.speed_checkpoints.clear();
@@ -395,6 +438,14 @@ impl App {
             || self.is_preparing_export
             || matches!(self.file_load_state, FileLoadState::Loading)
             || self.has_active_transfers()
+    }
+
+    fn has_spinner_operation(&self) -> bool {
+        self.is_renaming
+            || self.is_deleting
+            || self.is_creating_folder
+            || self.is_preparing_export
+            || matches!(self.file_load_state, FileLoadState::Loading)
     }
 
     fn is_busy(&self) -> bool {
@@ -693,23 +744,25 @@ impl App {
 
         // D&D
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if !dropped.is_empty() && !is_busy && !text_edit_focused {
-            if let Some(bid) = self.selected_bundle_id() {
-                let paths: Vec<PathBuf> = dropped.iter().filter_map(|f| f.path.clone()).collect();
-                if !paths.is_empty() {
-                    let cancel = self.new_cancel_flag();
-                    let concurrency = self.settings.concurrency;
-                    let cur = self.current_path.clone();
-                    self.cmd_tx
-                        .send(DeviceCommand::UploadFiles {
-                            bundle_id: bid,
-                            current_path: cur,
-                            paths,
-                            cancel,
-                            concurrency,
-                        })
-                        .ok();
-                }
+        if !dropped.is_empty()
+            && !is_busy
+            && !text_edit_focused
+            && let Some(bid) = self.selected_bundle_id()
+        {
+            let paths: Vec<PathBuf> = dropped.iter().filter_map(|f| f.path.clone()).collect();
+            if !paths.is_empty() {
+                let cancel = self.new_cancel_flag();
+                let concurrency = self.settings.concurrency;
+                let cur = self.current_path.clone();
+                self.cmd_tx
+                    .send(DeviceCommand::UploadFiles {
+                        bundle_id: bid,
+                        current_path: cur,
+                        paths,
+                        cancel,
+                        concurrency,
+                    })
+                    .ok();
             }
         }
     }
@@ -756,7 +809,11 @@ impl App {
         let settings_resp = settings_resp.on_hover_text(s.tip_settings);
         if settings_resp.clicked() && !self.show_settings {
             self.show_settings = true;
-            self.settings_snapshot = Some((self.settings.lang, self.settings.concurrency));
+            self.settings_snapshot = Some((
+                self.settings.lang,
+                self.settings.concurrency,
+                self.settings.open_top_favorite_on_startup,
+            ));
         }
 
         // Device info: small top margin, top-aligned (no bottom padding)
@@ -765,7 +822,7 @@ impl App {
             ui.add_space(8.0);
             match &self.device_status {
                 DeviceStatus::Unknown | DeviceStatus::Disconnected => {
-                    ui.spinner();
+                    paint_spinner(ui);
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new(s.waiting).color(W11_TEXT).size(16.0));
                 }
@@ -861,22 +918,32 @@ impl App {
             _ => return,
         };
 
-        // sort alphabetically, then partition into favorites and the rest
+        // Favorites use the persisted order; all other apps retain display-name order.
         let mut all_sorted: Vec<usize> = (0..self.apps.len()).collect();
         {
             let apps = &self.apps;
             all_sorted.sort_by(|&a, &b| apps[a].display_name.cmp(&apps[b].display_name));
         }
-        let (fav_sorted, non_fav_sorted): (Vec<usize>, Vec<usize>) =
-            all_sorted.iter().copied().partition(|&i| {
-                self.settings
-                    .favorites_by_device
-                    .get(&device_udid)
-                    .is_some_and(|favorites| favorites.contains(&self.apps[i].bundle_id))
-            });
+        let favorites = self
+            .settings
+            .favorites_by_device
+            .get(&device_udid)
+            .cloned()
+            .unwrap_or_default();
+        let fav_sorted: Vec<usize> = favorites
+            .iter()
+            .filter_map(|bundle_id| self.apps.iter().position(|app| app.bundle_id == *bundle_id))
+            .collect();
+        let favorite_ids: HashSet<&str> = favorites.iter().map(String::as_str).collect();
+        let non_fav_sorted: Vec<usize> = all_sorted
+            .iter()
+            .copied()
+            .filter(|&i| !favorite_ids.contains(self.apps[i].bundle_id.as_str()))
+            .collect();
 
         let mut clicked_app: Option<(usize, String)> = None;
         let mut toggle_fav: Option<String> = None;
+        let mut favorite_drop: Option<(String, String)> = None;
 
         // pre-load textures (borrow separation)
         // Decode PNG → upload to egui texture → free the raw PNG bytes immediately.
@@ -917,7 +984,8 @@ impl App {
                         let display_name = self.apps[real_idx].display_name.clone();
                         let selected = self.selected_app_idx == Some(real_idx);
                         let tex = self.app_icons.get(&bundle_id);
-                        let row_resp = sidebar_row(ui, &display_name, selected, tex);
+                        let row_resp = sidebar_row(ui, &display_name, selected, tex, true);
+                        row_resp.dnd_set_drag_payload(bundle_id.clone());
                         let remove_favorite = std::cell::Cell::new(false);
                         row_resp.context_menu(|ui| {
                             if ui.button(s.ctx_remove_favorite).clicked() {
@@ -925,7 +993,9 @@ impl App {
                                 ui.close();
                             }
                         });
-                        if remove_favorite.get() {
+                        if let Some(source) = row_resp.dnd_release_payload::<String>() {
+                            favorite_drop = Some(((*source).clone(), bundle_id.clone()));
+                        } else if remove_favorite.get() {
                             toggle_fav = Some(bundle_id.clone());
                         } else if row_resp.clicked() && !selected {
                             clicked_app = Some((real_idx, bundle_id.clone()));
@@ -941,7 +1011,7 @@ impl App {
                     let display_name = self.apps[real_idx].display_name.clone();
                     let selected = self.selected_app_idx == Some(real_idx);
                     let tex = self.app_icons.get(&bundle_id);
-                    let row_resp = sidebar_row(ui, &display_name, selected, tex);
+                    let row_resp = sidebar_row(ui, &display_name, selected, tex, false);
                     let add_favorite = std::cell::Cell::new(false);
                     row_resp.context_menu(|ui| {
                         if ui.button(s.ctx_add_favorite).clicked() {
@@ -957,29 +1027,46 @@ impl App {
                 }
             });
 
-        if let Some(bid) = toggle_fav {
+        if let Some((source, target)) = favorite_drop {
+            if source != target {
+                let favorites = self
+                    .settings
+                    .favorites_by_device
+                    .entry(device_udid.clone())
+                    .or_default();
+                if let (Some(from), Some(to)) = (
+                    favorites.iter().position(|id| id == &source),
+                    favorites.iter().position(|id| id == &target),
+                ) {
+                    let item = favorites.remove(from);
+                    let insert_at = favorite_insert_index(from, to);
+                    favorites.insert(insert_at, item);
+                    self.settings.save();
+                }
+            }
+        } else if let Some(bid) = toggle_fav {
             let favorites = self
                 .settings
                 .favorites_by_device
                 .entry(device_udid)
                 .or_default();
-            if favorites.contains(&bid) {
-                favorites.remove(&bid);
+            if let Some(pos) = favorites.iter().position(|id| id == &bid) {
+                favorites.remove(pos);
             } else {
-                favorites.insert(bid);
+                favorites.push(bid);
             }
             self.settings.save();
         }
         if let Some((i, bundle_id)) = clicked_app {
-            self.selected_app_idx = Some(i);
-            self.reset_file_state();
-            self.file_load_state = FileLoadState::Loading;
-            self.cmd_tx
-                .send(DeviceCommand::SelectApp {
-                    bundle_id,
-                    path: "/Documents".to_string(),
-                })
-                .ok();
+            // Keep the existing bundle id capture as part of the click decision;
+            // select_app is the shared command path for manual and auto-open.
+            if self
+                .apps
+                .get(i)
+                .is_some_and(|app| app.bundle_id == bundle_id)
+            {
+                self.select_app(i);
+            }
         }
     }
 
@@ -1150,36 +1237,32 @@ impl App {
                 if cmd_btn(ui, ICON_UPLOAD, s.lbl_upload)
                     .on_hover_text(s.tip_upload)
                     .clicked()
-                {
-                    if let Some(paths) = rfd::FileDialog::new()
+                    && let Some(paths) = rfd::FileDialog::new()
                         .set_title(s.tip_upload)
                         .add_filter(s.no_files, &["*"])
                         .pick_files()
-                    {
-                        let cancel = self.new_cancel_flag();
-                        let concurrency = self.settings.concurrency;
-                        let cur = self.current_path.clone();
-                        self.cmd_tx
-                            .send(DeviceCommand::UploadFiles {
-                                bundle_id: bundle_id.to_owned(),
-                                current_path: cur,
-                                paths,
-                                cancel,
-                                concurrency,
-                            })
-                            .ok();
-                    }
+                {
+                    let cancel = self.new_cancel_flag();
+                    let concurrency = self.settings.concurrency;
+                    let cur = self.current_path.clone();
+                    self.cmd_tx
+                        .send(DeviceCommand::UploadFiles {
+                            bundle_id: bundle_id.to_owned(),
+                            current_path: cur,
+                            paths,
+                            cancel,
+                            concurrency,
+                        })
+                        .ok();
                 }
             });
             ui.add_enabled_ui(can_export, |ui| {
                 if cmd_btn(ui, ICON_DOWNLOAD, s.lbl_export)
                     .on_hover_text(s.tip_export)
                     .clicked()
+                    && let Some(dest) = rfd::FileDialog::new().set_title(s.tip_export).pick_folder()
                 {
-                    if let Some(dest) = rfd::FileDialog::new().set_title(s.tip_export).pick_folder()
-                    {
-                        self.trigger_export(bundle_id, dest);
-                    }
+                    self.trigger_export(bundle_id, dest);
                 }
             });
             ui.add_enabled_ui(can_act, |ui| {
@@ -1220,13 +1303,12 @@ impl App {
             });
             if self.has_active_transfers() {
                 ui.separator();
-                if let Some(cancel) = self.transfer_cancel.clone() {
-                    if cmd_btn(ui, ICON_CANCEL, s.lbl_cancel)
+                if let Some(cancel) = self.transfer_cancel.clone()
+                    && cmd_btn(ui, ICON_CANCEL, s.lbl_cancel)
                         .on_hover_text(s.tip_cancel)
                         .clicked()
-                    {
-                        cancel.store(true, Ordering::Relaxed);
-                    }
+                {
+                    cancel.store(true, Ordering::Relaxed);
                 }
             }
         });
@@ -1266,7 +1348,7 @@ impl App {
                 self.current_op_label(s).map(|l| l.to_string())
             };
             if let Some(label) = status_label {
-                ui.spinner();
+                paint_spinner(ui);
                 ui.add_space(4.0);
                 ui.colored_label(egui::Color32::from_gray(120), label);
             }
@@ -1694,11 +1776,9 @@ impl App {
             );
             resp.context_menu(|ui| {
                 ui.set_min_width(160.0);
-                if can_act {
-                    if ui.button(s.ctx_new_folder).clicked() {
-                        do_new_folder = true;
-                        ui.close();
-                    }
+                if can_act && ui.button(s.ctx_new_folder).clicked() {
+                    do_new_folder = true;
+                    ui.close();
                 }
             });
         } else {
@@ -1769,8 +1849,8 @@ impl App {
             if !ctrl {
                 self.selected_files.clear();
             }
-            for j in lo..=hi {
-                self.selected_files.insert(display_names[j].clone());
+            for name in display_names.iter().take(hi + 1).skip(lo) {
+                self.selected_files.insert(name.clone());
             }
         } else if ctrl {
             if self.selected_files.contains(&name) {
@@ -1878,9 +1958,8 @@ impl App {
                     .anchor_file
                     .as_deref()
                     .and_then(|af| display_names.iter().position(|n| n == af));
-                let cursor_idx = if shift && anchor_idx.is_some() {
+                let cursor_idx = if shift && let Some(ai) = anchor_idx {
                     // Shift: cursor is the selection end farthest from the anchor
-                    let ai = anchor_idx.unwrap();
                     let sel_min = self
                         .selected_files
                         .iter()
@@ -1967,10 +2046,11 @@ impl App {
         if actions.new_folder {
             self.trigger_new_folder();
         }
-        if actions.export && can_export {
-            if let Some(dest) = rfd::FileDialog::new().set_title(s.tip_export).pick_folder() {
-                self.trigger_export(&bundle_id, dest);
-            }
+        if actions.export
+            && can_export
+            && let Some(dest) = rfd::FileDialog::new().set_title(s.tip_export).pick_folder()
+        {
+            self.trigger_export(&bundle_id, dest);
         }
     }
 
@@ -2020,6 +2100,10 @@ impl App {
                         ui.label(s.settings_threads);
                         ui.add(egui::Slider::new(&mut self.settings.concurrency, 1..=8));
                         ui.end_row();
+
+                        ui.label(s.settings_open_top_favorite);
+                        ui.checkbox(&mut self.settings.open_top_favorite_on_startup, "");
+                        ui.end_row();
                     });
 
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -2057,14 +2141,16 @@ impl App {
             self.show_settings = false;
         } else if do_cancel {
             // restore from snapshot
-            if let Some((lang, concurrency)) = self.settings_snapshot.take() {
+            if let Some((lang, concurrency, open_top_favorite)) = self.settings_snapshot.take() {
                 self.settings.lang = lang;
                 self.settings.concurrency = concurrency;
+                self.settings.open_top_favorite_on_startup = open_top_favorite;
             }
             self.show_settings = false;
         } else if do_reset {
             self.settings.lang = crate::i18n::Lang::default();
             self.settings.concurrency = 2;
+            self.settings.open_top_favorite_on_startup = false;
         }
     }
 
@@ -2387,6 +2473,41 @@ impl App {
     }
 }
 
+fn favorite_insert_index(_source_index: usize, target_index: usize) -> usize {
+    // The target index is measured before removal, so inserting at it places the
+    // source after the target when moving down and before it when moving up.
+    target_index
+}
+
+fn paint_spinner(ui: &mut egui::Ui) {
+    let size = ui.style().spacing.interact_size.y;
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
+    ui.ctx().request_repaint_after(SPINNER_REPAINT_INTERVAL);
+
+    let color = ui.visuals().strong_text_color();
+    let radius = (rect.height().min(rect.width()) / 2.0) - 2.0;
+    let n_points = (radius.round() as u32).clamp(8, 128);
+    let interval_secs = SPINNER_REPAINT_INTERVAL.as_secs_f64();
+    let time = ui.input(|i| i.time);
+    let time = (time / interval_secs).floor() * interval_secs;
+    let start_angle = time * std::f64::consts::TAU;
+    let end_angle = start_angle + 240f64.to_radians() * time.sin();
+    let points: Vec<egui::Pos2> = (0..n_points)
+        .map(|i| {
+            let fraction = i as f64 / n_points as f64;
+            let angle = start_angle + (end_angle - start_angle) * fraction;
+            let (sin, cos) = angle.sin_cos();
+            rect.center() + radius * egui::vec2(cos as f32, sin as f32)
+        })
+        .collect();
+    ui.painter()
+        .add(egui::Shape::line(points, egui::Stroke::new(3.0_f32, color)));
+}
+
 // ─── Sidebar row helper (free function for borrow separation) ────────────────
 /// Renders one pill-shaped sidebar row. Uses painter only (no widget allocation),
 /// so the entire row is clickable.
@@ -2395,11 +2516,16 @@ fn sidebar_row(
     display_name: &str,
     selected: bool,
     texture: Option<&egui::TextureHandle>,
+    draggable: bool,
 ) -> egui::Response {
     let row_h = 36.0;
     let full_w = ui.available_width();
-    let (row_rect, row_resp) =
-        ui.allocate_exact_size(egui::Vec2::new(full_w, row_h), egui::Sense::click());
+    let sense = if draggable {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let (row_rect, row_resp) = ui.allocate_exact_size(egui::Vec2::new(full_w, row_h), sense);
 
     // pill background
     let pill = row_rect.shrink2(egui::Vec2::new(4.0, 2.0));
@@ -2498,15 +2624,17 @@ impl eframe::App for App {
         }
 
         // expire status message after 4 seconds
-        if let Some((_, t)) = &self.status_msg {
-            if t.elapsed().as_secs() >= 4 {
+        if let Some(elapsed) = self.status_msg.as_ref().map(|(_, t)| t.elapsed()) {
+            if elapsed >= STATUS_MESSAGE_DURATION {
                 self.status_msg = None;
+            } else {
+                ctx.request_repaint_after(STATUS_MESSAGE_DURATION - elapsed);
             }
         }
 
         let is_busy = self.is_busy();
-        if is_busy {
-            ctx.request_repaint();
+        if self.has_spinner_operation() {
+            ctx.request_repaint_after(SPINNER_REPAINT_INTERVAL);
         }
 
         self.handle_shortcuts(ctx, is_busy);

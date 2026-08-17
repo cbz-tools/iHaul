@@ -13,13 +13,15 @@ A lightweight iFunBox alternative for Windows, written in Rust.
 - **Export** — download files and folders to a local folder (folder structure preserved)
 - **Parallel transfers** — transfer multiple files concurrently with speed and progress tracking
 - **File operations** — rename, delete (multi-select supported), new folder
-- **Favorites** — pin frequently used apps to the top of the sidebar
+- **Favorites** — favorite apps appear at the top of the sidebar, can be reordered, and the top favorite has priority; optionally enable the startup setting to open it and its `/Documents` folder on startup or connection
 - **Multilingual** — English, 日本語, 中文
 - **No iCloud / no Wi-Fi sync** — transfers over USB only, no Apple account needed
 
 ## Download
 
 Download the latest release from [Releases](https://github.com/cbz-tools/iHaul/releases).
+
+See [CHANGELOG.md](CHANGELOG.md) for recent changes.
 
 | File | Contents |
 |---|---|
@@ -65,6 +67,7 @@ The binary will be at `target\release\iHaul.exe`.
 
 1. Connect your iOS device via USB and tap **Trust** on the device if prompted.
 2. Launch `iHaul.exe` — the app detects the device automatically within a few seconds.
+   Optionally enable the startup setting to open the top favorite and its `/Documents` folder automatically on startup or connection.
 3. Select an app from the sidebar to browse its Documents folder.
 4. Use the toolbar buttons or drag & drop to upload files.
 

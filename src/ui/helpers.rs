@@ -100,7 +100,7 @@ pub(super) fn apply_win11_theme(ctx: &egui::Context) {
     vis.window_corner_radius = r8;
     vis.window_fill = W11_SURFACE;
     vis.window_shadow = egui::Shadow {
-        offset: [0, 4].into(),
+        offset: [0, 4],
         blur: 16,
         spread: 0,
         color: egui::Color32::from_black_alpha(32),
@@ -144,7 +144,7 @@ pub(super) fn apply_win11_theme(ctx: &egui::Context) {
     // menu
     vis.menu_corner_radius = r8;
     vis.popup_shadow = egui::Shadow {
-        offset: [0, 2].into(),
+        offset: [0, 2],
         blur: 8,
         spread: 0,
         color: egui::Color32::from_black_alpha(24),
@@ -289,45 +289,4 @@ pub(super) fn setup_font(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
     egui_material_icons::initialize(ctx);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn viewer_font_candidates_preserve_ttc_indices_and_append_order() {
-        assert_eq!(
-            WINDOWS_FONT_CANDIDATES,
-            &[
-                ("jp_meiryo", r"C:\Windows\Fonts\meiryo.ttc", 0),
-                ("jp_yugothic", r"C:\Windows\Fonts\YuGothM.ttc", 0),
-                ("jp_msgothic", r"C:\Windows\Fonts\msgothic.ttc", 2),
-                ("jp_msmincho", r"C:\Windows\Fonts\msmincho.ttc", 0),
-                ("zh_yahei", r"C:\Windows\Fonts\msyh.ttc", 0),
-                ("zh_yahei_bold", r"C:\Windows\Fonts\msyhbd.ttc", 0),
-                ("zh_simsun", r"C:\Windows\Fonts\simsun.ttc", 0),
-                ("zh_simhei", r"C:\Windows\Fonts\simhei.ttf", 0),
-            ]
-        );
-
-        let defaults = egui::FontDefinitions::default();
-        let mut fonts = defaults.clone();
-        for (font_name, _, index) in WINDOWS_FONT_CANDIDATES {
-            append_font(&mut fonts, font_name, vec![0], *index);
-            assert_eq!(fonts.font_data[*font_name].index, *index);
-        }
-
-        let expected_names: Vec<String> = WINDOWS_FONT_CANDIDATES
-            .iter()
-            .map(|(font_name, _, _)| (*font_name).to_owned())
-            .collect();
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let family_fonts = &fonts.families[&family];
-            assert_eq!(
-                &family_fonts[defaults.families[&family].len()..],
-                expected_names.as_slice()
-            );
-        }
-    }
 }

@@ -75,5 +75,6 @@ pub static S: super::S = super::S {
     settings_title: "設定",
     settings_language: "言語",
     settings_threads: "スレッド数",
+    settings_open_top_favorite: "起動時にお気に入りTOPを開く",
     settings_reset_defaults: "デフォルトに戻す",
 };
