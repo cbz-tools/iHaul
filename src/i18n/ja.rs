@@ -77,4 +77,9 @@ pub static S: super::S = super::S {
     settings_threads: "スレッド数",
     settings_open_top_favorite: "起動時にお気に入りTOPを開く",
     settings_reset_defaults: "デフォルトに戻す",
+    about_title: "概要",
+    about_version: "バージョン",
+    about_github: "GitHub",
+    about_latest_release: "最新リリース",
+    about_close: "閉じる",
 };

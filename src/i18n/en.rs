@@ -77,4 +77,9 @@ pub static S: super::S = super::S {
     settings_threads: "Threads",
     settings_open_top_favorite: "Open top favorite on startup",
     settings_reset_defaults: "Reset to Defaults",
+    about_title: "About",
+    about_version: "Version",
+    about_github: "GitHub",
+    about_latest_release: "Latest release",
+    about_close: "Close",
 };

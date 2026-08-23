@@ -1,4 +1,5 @@
 // ui/mod.rs — App struct and eframe::App implementation
+mod about;
 mod helpers;
 mod types;
 
@@ -94,6 +95,8 @@ pub struct App {
     // Settings dialog
     show_settings: bool,
     settings_snapshot: Option<(crate::i18n::Lang, usize, bool)>, // snapshot for Cancel to restore
+    // About dialog
+    show_about: bool,
     auto_open_attempted: bool, // reset for each device connection/session
     // Transfer tracking
     transfers: Vec<TransferItem>,
@@ -154,6 +157,7 @@ impl App {
             is_creating_folder: false,
             show_settings: false,
             settings_snapshot: None,
+            show_about: false,
             auto_open_attempted: false,
             transfers: Vec::new(),
             transfer_cancel: None,
@@ -794,7 +798,7 @@ impl App {
         ui.painter().rect_filled(toolbar_rect, 0.0, W11_TOOLBAR);
         ui.set_min_height(40.0);
 
-        // Settings button: drawn at a fixed position via painter+interact to avoid ID warnings
+        // Settings menu button: drawn at a fixed position via painter+interact to avoid ID warnings
         // Y center: 2px from toolbar top + half button size (top-aligned layout)
         let settings_sz = 40.0_f32;
         let settings_cy = toolbar_rect.min.y + 2.0 + settings_sz / 2.0;
@@ -807,8 +811,16 @@ impl App {
             ui.id().with("toolbar_settings"),
             egui::Sense::click(),
         );
+        let settings_popup_open = egui::Popup::is_id_open(
+            ui.ctx(),
+            egui::Popup::default_response_id(&settings_resp),
+        );
         {
-            let bg = if self.show_settings || settings_resp.is_pointer_button_down_on() {
+            let bg = if settings_popup_open
+                || self.show_settings
+                || self.show_about
+                || settings_resp.is_pointer_button_down_on()
+            {
                 W11_SEL
             } else if settings_resp.hovered() {
                 W11_HOVER
@@ -827,14 +839,24 @@ impl App {
             );
         }
         let settings_resp = settings_resp.on_hover_text(s.tip_settings);
-        if settings_resp.clicked() && !self.show_settings {
-            self.show_settings = true;
-            self.settings_snapshot = Some((
-                self.settings.lang,
-                self.settings.concurrency,
-                self.settings.open_top_favorite_on_startup,
-            ));
-        }
+        egui::Popup::menu(&settings_resp).show(|ui| {
+            ui.set_min_width(140.0);
+            if ui.button(s.settings_title).clicked() {
+                if !self.show_settings {
+                    self.show_settings = true;
+                    self.settings_snapshot = Some((
+                        self.settings.lang,
+                        self.settings.concurrency,
+                        self.settings.open_top_favorite_on_startup,
+                    ));
+                }
+                ui.close();
+            }
+            if ui.button(s.about_title).clicked() {
+                self.show_about = true;
+                ui.close();
+            }
+        });
 
         // Device info: small top margin, top-aligned (no bottom padding)
         ui.add_space(5.0);
@@ -2198,6 +2220,11 @@ impl App {
         self.show_rename_dialog(ctx, s);
         self.show_new_folder_dialog(ctx, s);
         self.show_settings_dialog(ctx);
+        about::show(
+            ctx,
+            &mut self.show_about,
+            crate::i18n::strings(self.settings.lang),
+        );
     }
 
     /// Delete confirmation dialog.

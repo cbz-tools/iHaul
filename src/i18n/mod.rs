@@ -117,6 +117,12 @@ pub struct S {
     pub settings_threads: &'static str,
     pub settings_open_top_favorite: &'static str,
     pub settings_reset_defaults: &'static str,
+    // about dialog
+    pub about_title: &'static str,
+    pub about_version: &'static str,
+    pub about_github: &'static str,
+    pub about_latest_release: &'static str,
+    pub about_close: &'static str,
 }
 
 impl S {

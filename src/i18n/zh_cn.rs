@@ -77,4 +77,9 @@ pub static S: super::S = super::S {
     settings_threads: "线程数",
     settings_open_top_favorite: "启动时打开收藏夹首项",
     settings_reset_defaults: "恢复默认值",
+    about_title: "关于",
+    about_version: "版本",
+    about_github: "GitHub",
+    about_latest_release: "最新版本",
+    about_close: "关闭",
 };
