@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.5] - 2026-11-08
+
+### Fixed
+- Fixed drag-and-drop file transfers when a text field has focus.
+
 ## Unreleased
 
 ### Added

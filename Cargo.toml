@@ -4,7 +4,7 @@ path = "src/main.rs"
 
 [package]
 name = "ihaul"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Windows GUI for transferring files to/from iOS devices"
 license = "MIT"
@@ -15,7 +15,7 @@ repository = "https://github.com/cbz-tools/iHaul"
 # ---------------------------------------------------------------------------
 
 [dependencies]
-idevice = { version = "0.1.65", features = ["house_arrest", "afc", "usbmuxd", "installation_proxy", "springboardservices"] }
+idevice = { version = "=0.1.68", features = ["house_arrest", "afc", "usbmuxd", "installation_proxy", "springboardservices"] }
 tokio = { version = "1", features = ["full"] }
 eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts"] }
 rfd = "0.15"

@@ -27,11 +27,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, s: &crate::i18n::S) {
             ui.set_min_width(280.0);
             ui.vertical_centered(|ui| {
                 ui.label(egui::RichText::new(PRODUCT_NAME).strong());
-                ui.label(format!(
-                    "{} {}",
-                    s.about_version,
-                    env!("CARGO_PKG_VERSION")
-                ));
+                ui.label(format!("{} {}", s.about_version, env!("CARGO_PKG_VERSION")));
             });
 
             ui.add_space(12.0);

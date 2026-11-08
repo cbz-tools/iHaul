@@ -46,15 +46,40 @@ struct CommandBarContext<'a> {
     strings: &'a crate::i18n::S,
 }
 
-struct FileTableContext<'a, 'file> {
+struct FileTableContext<'a> {
     ctx: &'a egui::Context,
-    display_files: &'a [&'file FileEntry],
+    files: &'a [FileEntry],
+    display_indices: &'a [usize],
     file_list_h: f32,
     can_act: bool,
     has_sel: bool,
     sel_has_dir: bool,
     filter_lower: &'a str,
     strings: &'a crate::i18n::S,
+}
+
+struct FileDisplayCache {
+    files_changed: bool,
+    filter_text: String,
+    filter_lower: String,
+    sort_column: Option<SortColumn>,
+    sort_ascending: Option<bool>,
+    folder_kind: String,
+    display_indices: Vec<usize>,
+}
+
+impl Default for FileDisplayCache {
+    fn default() -> Self {
+        Self {
+            files_changed: true,
+            filter_text: String::new(),
+            filter_lower: String::new(),
+            sort_column: None,
+            sort_ascending: None,
+            folder_kind: String::new(),
+            display_indices: Vec::new(),
+        }
+    }
 }
 
 // ─── App struct ───────────────────────────────────────────────────────────────
@@ -66,7 +91,9 @@ pub struct App {
     file_load_state: FileLoadState,
     files: Vec<FileEntry>,
     file_info: HashMap<String, FileMetadata>,
+    file_display_cache: FileDisplayCache,
     selected_files: HashSet<String>,
+    selected_dir_cache: Option<bool>,
     anchor_file: Option<String>,
     sort_column: SortColumn,
     sort_ascending: bool,
@@ -133,7 +160,9 @@ impl App {
             file_load_state: FileLoadState::Empty,
             files: Vec::new(),
             file_info: HashMap::new(),
+            file_display_cache: FileDisplayCache::default(),
             selected_files: HashSet::new(),
+            selected_dir_cache: None,
             anchor_file: None,
             sort_column: SortColumn::Name,
             sort_ascending: true,
@@ -244,8 +273,16 @@ impl App {
                 DeviceMessage::FileList(Ok((entries, info))) => {
                     let names: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
                     self.selected_files.retain(|s| names.contains(s));
+                    if self
+                        .anchor_file
+                        .as_ref()
+                        .is_some_and(|name| !names.contains(name))
+                    {
+                        self.anchor_file = None;
+                    }
                     self.files = entries;
                     self.file_info = info;
+                    self.invalidate_file_display_cache();
                     self.file_load_state = FileLoadState::Loaded;
                     if !self.has_active_transfers() {
                         self.clear_transfers();
@@ -316,8 +353,10 @@ impl App {
         self.files.clear();
         self.file_info.clear();
         self.selected_files.clear();
+        self.selected_dir_cache = None;
         self.anchor_file = None;
         self.filter_text.clear();
+        self.invalidate_file_display_cache();
         self.filter_focus_request = false;
         self.file_load_state = FileLoadState::Empty;
         self.clear_transfers();
@@ -521,17 +560,10 @@ impl App {
         if !self.selected_files.is_empty() {
             self.delete_base_path = self.current_path.clone();
             self.files_to_delete = self
-                .selected_files
+                .files
                 .iter()
-                .map(|name| {
-                    let is_dir = self
-                        .files
-                        .iter()
-                        .find(|e| &e.name == name)
-                        .map(|e| e.is_dir)
-                        .unwrap_or(false);
-                    (name.clone(), is_dir)
-                })
+                .filter(|entry| self.selected_files.contains(&entry.name))
+                .map(|entry| (entry.name.clone(), entry.is_dir))
                 .collect();
             self.files_to_delete.sort_unstable_by(|a, b| a.0.cmp(&b.0));
             self.show_delete_confirm = true;
@@ -609,9 +641,11 @@ impl App {
         self.clear_transfers_if_idle();
         self.current_path = path.clone();
         self.selected_files.clear();
+        self.selected_dir_cache = None;
         self.anchor_file = None;
         self.files.clear();
         self.file_info.clear();
+        self.invalidate_file_display_cache();
         if let Some(bid) = self.selected_bundle_id() {
             self.cmd_tx
                 .send(DeviceCommand::NavigateTo {
@@ -660,24 +694,110 @@ impl App {
         }
     }
 
-    fn prune_filter_selection(&mut self, filter_lower: &str) {
-        let visible_names: HashSet<String> = self
-            .files
-            .iter()
-            .filter(|entry| {
-                filter_lower.is_empty() || entry.name.to_lowercase().contains(filter_lower)
-            })
-            .map(|entry| entry.name.clone())
-            .collect();
+    fn invalidate_file_display_cache(&mut self) {
+        self.file_display_cache.files_changed = true;
+        self.selected_dir_cache = None;
+    }
+
+    /// Rebuilds the visible file indices only after files, filter, or sort inputs change.
+    fn ensure_file_display_cache(&mut self, folder_kind: &str) -> bool {
+        let filter_changed = self.file_display_cache.filter_text != self.filter_text;
+        let visibility_changed = self.file_display_cache.files_changed || filter_changed;
+        let sort_changed = self.file_display_cache.sort_column != Some(self.sort_column)
+            || self.file_display_cache.sort_ascending != Some(self.sort_ascending);
+        let folder_kind_changed = self.sort_column == SortColumn::Kind
+            && self.file_display_cache.folder_kind != folder_kind;
+
+        if !visibility_changed && !sort_changed && !folder_kind_changed {
+            return false;
+        }
+
+        if visibility_changed {
+            let filter_lower = self.filter_text.to_lowercase();
+            self.file_display_cache.display_indices.clear();
+            self.file_display_cache
+                .display_indices
+                .reserve(self.files.len());
+            self.file_display_cache
+                .filter_text
+                .clone_from(&self.filter_text);
+            self.file_display_cache.filter_lower = filter_lower.clone();
+            for (index, entry) in self.files.iter().enumerate() {
+                if filter_lower.is_empty() || entry.name.to_lowercase().contains(&filter_lower) {
+                    self.file_display_cache.display_indices.push(index);
+                }
+            }
+        }
+
+        let sort_column = self.sort_column;
+        let sort_ascending = self.sort_ascending;
+        let files = &self.files;
+        let file_info = &self.file_info;
+        self.file_display_cache
+            .display_indices
+            .sort_by(|&a_index, &b_index| {
+                let a = &files[a_index];
+                let b = &files[b_index];
+                let dir_ord = b.is_dir.cmp(&a.is_dir);
+                if dir_ord != std::cmp::Ordering::Equal {
+                    return dir_ord;
+                }
+                let ord = match sort_column {
+                    SortColumn::Name => a.name.cmp(&b.name),
+                    SortColumn::Kind => entry_kind(a, folder_kind).cmp(&entry_kind(b, folder_kind)),
+                    SortColumn::Size => file_info
+                        .get(&a.name)
+                        .map(|(size, _)| *size)
+                        .unwrap_or(0)
+                        .cmp(&file_info.get(&b.name).map(|(size, _)| *size).unwrap_or(0)),
+                    SortColumn::Modified => file_info
+                        .get(&a.name)
+                        .map(|(_, modified)| modified.as_str())
+                        .unwrap_or("")
+                        .cmp(
+                            file_info
+                                .get(&b.name)
+                                .map(|(_, modified)| modified.as_str())
+                                .unwrap_or(""),
+                        ),
+                };
+                if sort_ascending { ord } else { ord.reverse() }
+            });
+        self.file_display_cache.sort_column = Some(sort_column);
+        self.file_display_cache.sort_ascending = Some(sort_ascending);
+        if sort_column == SortColumn::Kind {
+            self.file_display_cache.folder_kind = folder_kind.to_string();
+        }
+        self.file_display_cache.files_changed = false;
+        visibility_changed
+    }
+
+    fn prune_filter_selection(&mut self) {
+        let filter_lower = &self.file_display_cache.filter_lower;
+        let selected_count = self.selected_files.len();
         self.selected_files
-            .retain(|name| visible_names.contains(name));
-        if self
-            .anchor_file
-            .as_ref()
-            .is_some_and(|name| !visible_names.contains(name))
-        {
+            .retain(|name| filter_lower.is_empty() || name.to_lowercase().contains(filter_lower));
+        let anchor_hidden = self.anchor_file.as_ref().is_some_and(|name| {
+            !filter_lower.is_empty() && !name.to_lowercase().contains(filter_lower)
+        });
+        if anchor_hidden {
             self.anchor_file = None;
         }
+        if self.selected_files.len() != selected_count || anchor_hidden {
+            self.selected_dir_cache = None;
+        }
+    }
+
+    fn selected_has_dir(&mut self) -> bool {
+        if let Some(has_dir) = self.selected_dir_cache {
+            return has_dir;
+        }
+        let has_dir = self
+            .files
+            .iter()
+            .any(|entry| entry.is_dir && self.selected_files.contains(&entry.name));
+        self.selected_dir_cache = Some(has_dir);
+        has_dir
     }
 }
 
@@ -743,14 +863,12 @@ impl App {
             }
             if ctrl_a && app_sel {
                 self.selected_files = self.files.iter().map(|e| e.name.clone()).collect();
+                self.selected_dir_cache = None;
             }
             if del_key && has_sel {
                 self.trigger_delete_confirm();
             }
-            let sel_has_dir = self
-                .selected_files
-                .iter()
-                .any(|n| self.files.iter().any(|e| &e.name == n && e.is_dir));
+            let sel_has_dir = self.selected_has_dir();
             if f2_key && has_sel && self.renaming_file.is_none() && !sel_has_dir {
                 self.trigger_rename();
             }
@@ -759,7 +877,7 @@ impl App {
             }
             if enter && has_sel && self.selected_files.len() == 1 {
                 let sel = self.selected_files.iter().next().unwrap().clone();
-                if self.files.iter().any(|e| e.name == sel && e.is_dir) {
+                if sel_has_dir {
                     let path = format!("{}/{sel}", self.current_path);
                     self.navigate_to(path);
                 }
@@ -770,7 +888,6 @@ impl App {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped.is_empty()
             && !is_busy
-            && !text_edit_focused
             && let Some(bid) = self.selected_bundle_id()
         {
             let paths: Vec<PathBuf> = dropped.iter().filter_map(|f| f.path.clone()).collect();
@@ -811,10 +928,8 @@ impl App {
             ui.id().with("toolbar_settings"),
             egui::Sense::click(),
         );
-        let settings_popup_open = egui::Popup::is_id_open(
-            ui.ctx(),
-            egui::Popup::default_response_id(&settings_resp),
-        );
+        let settings_popup_open =
+            egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&settings_resp));
         {
             let bg = if settings_popup_open
                 || self.show_settings
@@ -1453,8 +1568,9 @@ impl App {
                         filter_resp.request_focus();
                     }
                 }
-                let filter_lower = self.filter_text.to_lowercase();
-                self.prune_filter_selection(&filter_lower);
+                if self.ensure_file_display_cache(s.folder_kind) {
+                    self.prune_filter_selection();
+                }
                 let total_count = self.files.len();
                 ui.colored_label(
                     egui::Color32::from_gray(150),
@@ -1468,8 +1584,6 @@ impl App {
                 }
             });
         });
-        let filter_lower = self.filter_text.to_lowercase();
-        self.prune_filter_selection(&filter_lower);
         ui.separator();
     }
 
@@ -1477,11 +1591,12 @@ impl App {
     fn build_file_table(
         &self,
         ui: &mut egui::Ui,
-        context: FileTableContext<'_, '_>,
+        context: FileTableContext<'_>,
     ) -> FilePanelActions {
         let FileTableContext {
             ctx,
-            display_files,
+            files,
+            display_indices,
             file_list_h,
             can_act,
             has_sel,
@@ -1577,8 +1692,10 @@ impl App {
                 });
                 hdr_col!(s.col_modified, SortColumn::Modified);
             })
-            .body(|mut body| {
-                for (i, entry) in display_files.iter().enumerate() {
+            .body(|body| {
+                body.rows(26.0, display_indices.len(), |mut row| {
+                    let i = row.index();
+                    let entry = &files[display_indices[i]];
                     let is_sel = selected_files.contains(&entry.name);
                     let mut row_sel: Option<(bool, bool)> = None;
                     let mut row_dbl = false;
@@ -1631,150 +1748,147 @@ impl App {
                     };
 
                     let show_hover = !is_sel && prev_hovered == Some(i);
-                    body.row(26.0, |mut row| {
-                        row.set_selected(is_sel);
-                        row.col(|ui| {
-                            let full_rect = ui.max_rect();
-                            // Reserve bg slot before label — full row width via with_clip_rect
-                            let bg_slot = ui.painter().add(egui::Shape::Noop);
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                            let icon = file_icon(entry);
-                            let text_color = if is_sel {
-                                W11_SEL_TEXT
-                            } else {
-                                ui.visuals().text_color()
-                            };
-                            let mut job = egui::text::LayoutJob::default();
-                            job.wrap.max_rows = 1;
-                            job.wrap.overflow_character = Some('…');
-                            job.wrap.break_anywhere = false;
-                            job.append(
-                                icon.codepoint,
-                                0.0,
-                                egui::TextFormat {
-                                    font_id: egui::FontId::new(18.0, icon.font_family()),
-                                    color: text_color,
-                                    valign: egui::Align::Center,
-                                    ..Default::default()
+                    row.set_selected(is_sel);
+                    row.col(|ui| {
+                        let full_rect = ui.max_rect();
+                        // Reserve bg slot before label — full row width via with_clip_rect
+                        let bg_slot = ui.painter().add(egui::Shape::Noop);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        let icon = file_icon(entry);
+                        let text_color = if is_sel {
+                            W11_SEL_TEXT
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        let mut job = egui::text::LayoutJob::default();
+                        job.wrap.max_rows = 1;
+                        job.wrap.overflow_character = Some('…');
+                        job.wrap.break_anywhere = false;
+                        job.append(
+                            icon.codepoint,
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::new(18.0, icon.font_family()),
+                                color: text_color,
+                                valign: egui::Align::Center,
+                                ..Default::default()
+                            },
+                        );
+                        job.append(
+                            &format!("  {}", entry.name),
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(14.0),
+                                color: text_color,
+                                valign: egui::Align::Center,
+                                ..Default::default()
+                            },
+                        );
+                        ui.add(egui::Label::new(job));
+                        let r = ui.interact(
+                            full_rect,
+                            egui::Id::new(("row_col1", i)),
+                            egui::Sense::click(),
+                        );
+                        if r.hovered() {
+                            new_hovered.set(Some(i));
+                        }
+                        if show_hover {
+                            let row_rect =
+                                egui::Rect::from_x_y_ranges(table_x_range, full_rect.y_range());
+                            ui.painter()
+                                .with_clip_rect(row_rect)
+                                .set(bg_slot, egui::Shape::rect_filled(row_rect, 0.0, W11_HOVER));
+                        }
+                        if r.secondary_clicked() && !is_sel {
+                            row_right.set(true);
+                        }
+                        if r.double_clicked() && entry.is_dir {
+                            row_dbl = true;
+                        } else if r.clicked() {
+                            row_sel = Some((
+                                ui.input(|inp| inp.modifiers.ctrl),
+                                ui.input(|inp| inp.modifiers.shift),
+                            ));
+                        }
+                        r.context_menu(mk());
+                    });
+                    row.col(|ui| {
+                        let full_rect = ui.max_rect();
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        ui.colored_label(egui::Color32::GRAY, entry_kind(entry, s.folder_kind));
+                        let r = ui.interact(
+                            full_rect,
+                            egui::Id::new(("row_col2", i)),
+                            egui::Sense::click(),
+                        );
+                        if r.hovered() {
+                            new_hovered.set(Some(i));
+                        }
+                        if r.secondary_clicked() && !is_sel {
+                            row_right.set(true);
+                        } else if r.clicked() {
+                            row_sel = Some((
+                                ui.input(|inp| inp.modifiers.ctrl),
+                                ui.input(|inp| inp.modifiers.shift),
+                            ));
+                        }
+                        r.context_menu(mk());
+                    });
+                    row.col(|ui| {
+                        let full_rect = ui.max_rect();
+                        if let Some((size, _)) = file_info.get(&entry.name) {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if entry.is_dir {
+                                        ui.label("—");
+                                    } else {
+                                        ui.label(format_size(*size));
+                                    }
                                 },
                             );
-                            job.append(
-                                &format!("  {}", entry.name),
-                                0.0,
-                                egui::TextFormat {
-                                    font_id: egui::FontId::proportional(14.0),
-                                    color: text_color,
-                                    valign: egui::Align::Center,
-                                    ..Default::default()
-                                },
-                            );
-                            ui.add(egui::Label::new(job));
-                            let r = ui.interact(
-                                full_rect,
-                                egui::Id::new(("row_col1", i)),
-                                egui::Sense::click(),
-                            );
-                            if r.hovered() {
-                                new_hovered.set(Some(i));
-                            }
-                            if show_hover {
-                                let row_rect =
-                                    egui::Rect::from_x_y_ranges(table_x_range, full_rect.y_range());
-                                ui.painter().with_clip_rect(row_rect).set(
-                                    bg_slot,
-                                    egui::Shape::rect_filled(row_rect, 0.0, W11_HOVER),
-                                );
-                            }
-                            if r.secondary_clicked() && !is_sel {
-                                row_right.set(true);
-                            }
-                            if r.double_clicked() && entry.is_dir {
-                                row_dbl = true;
-                            } else if r.clicked() {
-                                row_sel = Some((
-                                    ui.input(|inp| inp.modifiers.ctrl),
-                                    ui.input(|inp| inp.modifiers.shift),
-                                ));
-                            }
-                            r.context_menu(mk());
-                        });
-                        row.col(|ui| {
-                            let full_rect = ui.max_rect();
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                            ui.colored_label(egui::Color32::GRAY, entry_kind(entry, s.folder_kind));
-                            let r = ui.interact(
-                                full_rect,
-                                egui::Id::new(("row_col2", i)),
-                                egui::Sense::click(),
-                            );
-                            if r.hovered() {
-                                new_hovered.set(Some(i));
-                            }
-                            if r.secondary_clicked() && !is_sel {
-                                row_right.set(true);
-                            } else if r.clicked() {
-                                row_sel = Some((
-                                    ui.input(|inp| inp.modifiers.ctrl),
-                                    ui.input(|inp| inp.modifiers.shift),
-                                ));
-                            }
-                            r.context_menu(mk());
-                        });
-                        row.col(|ui| {
-                            let full_rect = ui.max_rect();
-                            if let Some((size, _)) = file_info.get(&entry.name) {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if entry.is_dir {
-                                            ui.label("—");
-                                        } else {
-                                            ui.label(format_size(*size));
-                                        }
-                                    },
-                                );
-                            }
-                            let r = ui.interact(
-                                full_rect,
-                                egui::Id::new(("row_col3", i)),
-                                egui::Sense::click(),
-                            );
-                            if r.hovered() {
-                                new_hovered.set(Some(i));
-                            }
-                            if r.secondary_clicked() && !is_sel {
-                                row_right.set(true);
-                            } else if r.clicked() {
-                                row_sel = Some((
-                                    ui.input(|inp| inp.modifiers.ctrl),
-                                    ui.input(|inp| inp.modifiers.shift),
-                                ));
-                            }
-                            r.context_menu(mk());
-                        });
-                        row.col(|ui| {
-                            let full_rect = ui.max_rect();
-                            if let Some((_, m)) = file_info.get(&entry.name) {
-                                ui.label(m.as_str());
-                            }
-                            let r = ui.interact(
-                                full_rect,
-                                egui::Id::new(("row_col4", i)),
-                                egui::Sense::click(),
-                            );
-                            if r.hovered() {
-                                new_hovered.set(Some(i));
-                            }
-                            if r.secondary_clicked() && !is_sel {
-                                row_right.set(true);
-                            } else if r.clicked() {
-                                row_sel = Some((
-                                    ui.input(|inp| inp.modifiers.ctrl),
-                                    ui.input(|inp| inp.modifiers.shift),
-                                ));
-                            }
-                            r.context_menu(mk());
-                        });
+                        }
+                        let r = ui.interact(
+                            full_rect,
+                            egui::Id::new(("row_col3", i)),
+                            egui::Sense::click(),
+                        );
+                        if r.hovered() {
+                            new_hovered.set(Some(i));
+                        }
+                        if r.secondary_clicked() && !is_sel {
+                            row_right.set(true);
+                        } else if r.clicked() {
+                            row_sel = Some((
+                                ui.input(|inp| inp.modifiers.ctrl),
+                                ui.input(|inp| inp.modifiers.shift),
+                            ));
+                        }
+                        r.context_menu(mk());
+                    });
+                    row.col(|ui| {
+                        let full_rect = ui.max_rect();
+                        if let Some((_, m)) = file_info.get(&entry.name) {
+                            ui.label(m.as_str());
+                        }
+                        let r = ui.interact(
+                            full_rect,
+                            egui::Id::new(("row_col4", i)),
+                            egui::Sense::click(),
+                        );
+                        if r.hovered() {
+                            new_hovered.set(Some(i));
+                        }
+                        if r.secondary_clicked() && !is_sel {
+                            row_right.set(true);
+                        } else if r.clicked() {
+                            row_sel = Some((
+                                ui.input(|inp| inp.modifiers.ctrl),
+                                ui.input(|inp| inp.modifiers.shift),
+                            ));
+                        }
+                        r.context_menu(mk());
                     });
 
                     if row_dbl {
@@ -1798,12 +1912,12 @@ impl App {
                     if row_nfld.get() {
                         do_new_folder = true;
                     }
-                }
+                });
             });
         self.hovered_row.set(new_hovered.get());
 
         // empty folder / background area below the table — context menu
-        if display_files.is_empty() {
+        if display_indices.is_empty() {
             let msg = if filter_lower.is_empty() {
                 s.no_files
             } else {
@@ -1880,36 +1994,47 @@ impl App {
     }
 
     /// Applies selection changes for Shift, Ctrl, or plain click.
-    fn apply_selection(&mut self, sel: (usize, String, bool, bool), display_names: &[String]) {
+    fn apply_selection(
+        selected_files: &mut HashSet<String>,
+        anchor_file: &mut Option<String>,
+        sel: (usize, String, bool, bool),
+        files: &[FileEntry],
+        display_indices: &[usize],
+    ) {
         let (idx, name, ctrl, shift) = sel;
         if shift {
-            let anchor_i = self
-                .anchor_file
+            let anchor_i = anchor_file
                 .as_deref()
-                .and_then(|af| display_names.iter().position(|n| n == af))
+                .and_then(|af| {
+                    display_indices
+                        .iter()
+                        .position(|&file_idx| files[file_idx].name == af)
+                })
                 .unwrap_or(idx);
             let lo = anchor_i.min(idx);
-            let hi = anchor_i.max(idx).min(display_names.len().saturating_sub(1));
+            let hi = anchor_i
+                .max(idx)
+                .min(display_indices.len().saturating_sub(1));
             if !ctrl {
-                self.selected_files.clear();
+                selected_files.clear();
             }
-            for name in display_names.iter().take(hi + 1).skip(lo) {
-                self.selected_files.insert(name.clone());
+            for &file_idx in display_indices.iter().take(hi + 1).skip(lo) {
+                selected_files.insert(files[file_idx].name.clone());
             }
         } else if ctrl {
-            if self.selected_files.contains(&name) {
-                self.selected_files.remove(&name);
+            if selected_files.contains(&name) {
+                selected_files.remove(&name);
             } else {
-                self.selected_files.insert(name.clone());
-                self.anchor_file = Some(name);
+                selected_files.insert(name.clone());
+                *anchor_file = Some(name);
             }
-        } else if self.selected_files.len() == 1 && self.selected_files.contains(&name) {
-            self.selected_files.clear();
-            self.anchor_file = None;
+        } else if selected_files.len() == 1 && selected_files.contains(&name) {
+            selected_files.clear();
+            *anchor_file = None;
         } else {
-            self.selected_files.clear();
-            self.selected_files.insert(name.clone());
-            self.anchor_file = Some(name);
+            selected_files.clear();
+            selected_files.insert(name.clone());
+            *anchor_file = Some(name);
         }
     }
 
@@ -1927,13 +2052,11 @@ impl App {
         let app_name = self.apps[idx].display_name.clone();
         let bundle_id = self.apps[idx].bundle_id.clone();
         let can_act = matches!(self.device_status, DeviceStatus::Connected { .. }) && !is_busy;
-        let mut filter_lower = self.filter_text.to_lowercase();
-        self.prune_filter_selection(&filter_lower);
+        if self.ensure_file_display_cache(s.folder_kind) {
+            self.prune_filter_selection();
+        }
         let mut has_sel = !self.selected_files.is_empty();
-        let mut sel_has_dir = self
-            .selected_files
-            .iter()
-            .any(|n| self.files.iter().any(|e| &e.name == n && e.is_dir));
+        let mut sel_has_dir = self.selected_has_dir();
         let mut can_export = can_act && has_sel;
 
         // ── Row 1: navigation + address bar ──────────────────────────────
@@ -1956,53 +2079,16 @@ impl App {
         // ── Status row: current operation (left) / count (right) ──────────
         self.show_status_bar(ui, s);
 
-        // ── Filtered and sorted file list ─────────────────────────────────
-        filter_lower = self.filter_text.to_lowercase();
-        self.prune_filter_selection(&filter_lower);
+        // The status bar may have changed the filter and updated the display cache.
+        let filter_lower = self.file_display_cache.filter_lower.clone();
         has_sel = !self.selected_files.is_empty();
-        sel_has_dir = self
-            .selected_files
-            .iter()
-            .any(|n| self.files.iter().any(|e| &e.name == n && e.is_dir));
+        sel_has_dir = self.selected_has_dir();
         can_export = can_act && has_sel;
-        let mut display_files: Vec<&FileEntry> = self
-            .files
-            .iter()
-            .filter(|entry| {
-                filter_lower.is_empty() || entry.name.to_lowercase().contains(&filter_lower)
-            })
-            .collect();
-        {
-            let sort_col = self.sort_column;
-            let sort_asc = self.sort_ascending;
-            let fi = &self.file_info;
-            let fk = s.folder_kind;
-            display_files.sort_by(|a, b| {
-                let dir_ord = b.is_dir.cmp(&a.is_dir);
-                if dir_ord != std::cmp::Ordering::Equal {
-                    return dir_ord;
-                }
-                let ord = match sort_col {
-                    SortColumn::Name => a.name.cmp(&b.name),
-                    SortColumn::Kind => entry_kind(a, fk).cmp(&entry_kind(b, fk)),
-                    SortColumn::Size => fi
-                        .get(&a.name)
-                        .map(|(s, _)| *s)
-                        .unwrap_or(0)
-                        .cmp(&fi.get(&b.name).map(|(s, _)| *s).unwrap_or(0)),
-                    SortColumn::Modified => fi
-                        .get(&a.name)
-                        .map(|(_, m)| m.as_str())
-                        .unwrap_or("")
-                        .cmp(fi.get(&b.name).map(|(_, m)| m.as_str()).unwrap_or("")),
-                };
-                if sort_asc { ord } else { ord.reverse() }
-            });
-        }
-        let display_names: Vec<String> = display_files.iter().map(|e| e.name.clone()).collect();
+        let files = &self.files;
+        let display_indices = &self.file_display_cache.display_indices;
 
         // ── Arrow key navigation ──────────────────────────────────────────
-        if !is_busy && !display_names.is_empty() {
+        if !is_busy && !display_indices.is_empty() {
             let (arrow_up, arrow_down, shift) = ctx.input(|i| {
                 (
                     i.key_pressed(egui::Key::ArrowUp) && !i.modifiers.alt,
@@ -2011,39 +2097,39 @@ impl App {
                 )
             });
             if arrow_up || arrow_down {
-                let anchor_idx = self
-                    .anchor_file
-                    .as_deref()
-                    .and_then(|af| display_names.iter().position(|n| n == af));
+                let anchor_idx = self.anchor_file.as_deref().and_then(|anchor| {
+                    display_indices
+                        .iter()
+                        .position(|&file_idx| files[file_idx].name == anchor)
+                });
                 let cursor_idx = if shift && let Some(ai) = anchor_idx {
                     // Shift: cursor is the selection end farthest from the anchor
-                    let sel_min = self
-                        .selected_files
-                        .iter()
-                        .filter_map(|f| display_names.iter().position(|n| n == f))
-                        .min()
-                        .unwrap_or(ai);
-                    let sel_max = self
-                        .selected_files
-                        .iter()
-                        .filter_map(|f| display_names.iter().position(|n| n == f))
-                        .max()
-                        .unwrap_or(ai);
+                    let mut sel_min = None;
+                    let mut sel_max = None;
+                    for (position, &file_idx) in display_indices.iter().enumerate() {
+                        if self.selected_files.contains(&files[file_idx].name) {
+                            sel_min.get_or_insert(position);
+                            sel_max = Some(position);
+                        }
+                    }
+                    let sel_min = sel_min.unwrap_or(ai);
+                    let sel_max = sel_max.unwrap_or(ai);
                     if ai <= sel_min { sel_max } else { sel_min }
                 } else {
                     anchor_idx
                         .or_else(|| {
-                            self.selected_files
-                                .iter()
-                                .next()
-                                .and_then(|f| display_names.iter().position(|n| n == f))
+                            self.selected_files.iter().next().and_then(|selected| {
+                                display_indices
+                                    .iter()
+                                    .position(|&file_idx| files[file_idx].name == *selected)
+                            })
                         })
                         .unwrap_or(0)
                 };
                 let new_cursor = if arrow_up {
                     cursor_idx.saturating_sub(1)
                 } else {
-                    (cursor_idx + 1).min(display_names.len().saturating_sub(1))
+                    (cursor_idx + 1).min(display_indices.len().saturating_sub(1))
                 };
                 if shift {
                     // Shift+arrow: extend selection while keeping anchor fixed
@@ -2051,16 +2137,17 @@ impl App {
                     let lo = ai.min(new_cursor);
                     let hi = ai.max(new_cursor);
                     self.selected_files.clear();
-                    for name in &display_names[lo..=hi] {
-                        self.selected_files.insert(name.clone());
+                    for &file_idx in &display_indices[lo..=hi] {
+                        self.selected_files.insert(files[file_idx].name.clone());
                     }
                     // anchor_file stays unchanged
                 } else {
                     self.selected_files.clear();
-                    self.selected_files
-                        .insert(display_names[new_cursor].clone());
-                    self.anchor_file = Some(display_names[new_cursor].clone());
+                    let name = files[display_indices[new_cursor]].name.clone();
+                    self.selected_files.insert(name.clone());
+                    self.anchor_file = Some(name);
                 }
+                self.selected_dir_cache = None;
             }
         }
 
@@ -2071,7 +2158,8 @@ impl App {
             ui,
             FileTableContext {
                 ctx,
-                display_files: &display_files,
+                files,
+                display_indices,
                 file_list_h,
                 can_act,
                 has_sel,
@@ -2082,16 +2170,24 @@ impl App {
         );
 
         // ── Apply deferred actions ────────────────────────────────────────
-        if let Some(col) = actions.sort_click {
-            self.toggle_sort(col);
-        }
         if let Some(name) = actions.right_click_name {
             self.selected_files.clear();
             self.selected_files.insert(name.clone());
             self.anchor_file = Some(name);
+            self.selected_dir_cache = None;
         }
         if let Some(sel) = actions.sel_action {
-            self.apply_selection(sel, &display_names);
+            Self::apply_selection(
+                &mut self.selected_files,
+                &mut self.anchor_file,
+                sel,
+                files,
+                display_indices,
+            );
+            self.selected_dir_cache = None;
+        }
+        if let Some(col) = actions.sort_click {
+            self.toggle_sort(col);
         }
         if let Some(name) = actions.enter_folder {
             self.navigate_to(format!("{}/{}", self.current_path, name));
@@ -2313,6 +2409,7 @@ impl App {
                     })
                     .ok();
                 self.selected_files.clear();
+                self.selected_dir_cache = None;
             }
             self.files_to_delete.clear();
             self.show_delete_confirm = false;

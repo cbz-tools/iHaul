@@ -1489,9 +1489,9 @@ checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
 name = "idevice"
-version = "0.1.65"
+version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7484b3a39a089068167a8ab0b3da6a05b5f6f8969daf1a893da1c7087cb2e09a"
+checksum = "f5d7799c8497cef60ddfd38f7d92e267b9fa5d0b18e7691d31041453007400ca"
 dependencies = [
  "async_zip",
  "base64",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "ihaul"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "clipboard-win",
